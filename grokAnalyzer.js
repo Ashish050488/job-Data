@@ -1,6 +1,7 @@
 // grokAnalyzer.js
 import Groq from "groq-sdk";
-import { GROQ_API_KEY } from "./config.js";
+import { GROQ_API_KEY } from './env.js';
+
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
