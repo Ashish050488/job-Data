@@ -11,11 +11,15 @@ function addHeaders(ws) {
         { header: "Compensation", key: "Compensation", width: 50 },
         { header: "Location", key: "Location", width: 40 },
         { header: "Posting Date", key: "PostingDate", width: 20 },
+        { header: "Expiration Date", key: "ExpirationDate", width: 20 },
         { header: "Department", key: "Department", width: 30 },
         { header: "Description", key: "Description", width: 100 },
         { header: "Application URL", key: "ApplicationURL", width: 80 },
         { header: "Contract Type", key: "ContractType", width: 20 },
         { header: "Experience Level", key: "ExperienceLevel", width: 20 },
+         { header: 'Experience Level', key: 'ExperienceLevel', width: 20 },
+    // ✅ NEW COLUMN ADDED HERE
+    { header: 'Estimated Years of Experience', key: 'estimatedYearsOfExperience', width: 20 },
         { header: "German Required", key: "GermanRequired", width: 20 },
         { header: "Summary", key: "Summary", width: 250 },
     ];

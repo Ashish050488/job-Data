@@ -12,11 +12,12 @@
   "type": "module",
   "dependencies": {
     "dotenv": "^17.2.2",
-    "exceljs": "^4.4.0",
     "groq-sdk": "^0.30.0",
     "he": "^1.2.0",
     "jsdom": "^26.1.0",
+    "mongodb": "^6.20.0",
     "node-fetch": "^2.7.0",
+    "nodemailer": "^7.0.6",
     "playwright": "^1.55.0",
     "puppeteer": "^24.17.0"
   }
