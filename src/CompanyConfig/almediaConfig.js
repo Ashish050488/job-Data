@@ -1,5 +1,5 @@
 import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
-import fetch from 'node-fetch'; // Required for the getDetails function
+import fetch from 'node-fetch';
 
 export const almediaConfig = {
     siteName: "Almedia",
@@ -7,30 +7,33 @@ export const almediaConfig = {
     method: "POST",
     needsDescriptionScraping: true,
     filterKeywords: [...COMMON_KEYWORDS,],
-    locationFilter: "Germany",
     
+    /**
+     * ✅ FIX 1: This function now ONLY fetches all jobs.
+     * The location filtering is handled by the new preFilter function below.
+     */
     getBody: (offset, limit, keywords, location) => {
-        const operationName = "ApiJobBoardWithTeams";
-        let variables = { organizationHostedJobsPageName: "almedia" };
-        let query;
-        if (location) {
-            variables.location = location;
-            query = "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!, $location: String) { jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { teams { id name parentTeamId } jobPostings(location: $location) { id title teamId locationId locationName workplaceType employmentType compensationTierSummary } } }";
-        } else {
-            query = "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { teams { id name parentTeamId } jobPostings { id title teamId locationId locationName workplaceType employmentType compensationTierSummary } } }";
-        }
-        return { operationName, variables, query };
+        return {
+            operationName: "ApiJobBoardWithTeams",
+            variables: { organizationHostedJobsPageName: "almedia" },
+            query: "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { teams { id name parentTeamId } jobPostings { id title teamId locationId locationName workplaceType employmentType compensationTierSummary } } }"
+        };
+    },
+    
+    /**
+     * ✅ FIX 2: Added a preFilter to check the location AFTER fetching.
+     * This will only keep jobs where the location is "Berlin".
+     */
+    preFilter: (job) => {
+        return job.locationName?.toLowerCase() === 'berlin';
     },
 
     getJobs: (data) => data?.data?.jobBoard?.jobPostings || [],
     
-    // ✅ FIX 1: This function stops the infinite loop.
-    // It tells the scraper engine the total number of jobs by counting the array length.
     getTotal: (data) => data?.data?.jobBoard?.jobPostings?.length || 0,
 
-    // ✅ FIX 2: Corrected the 'getDetails' function to accept the full 'job' object.
     getDetails: async (job) => {
-        const jobId = job.id; // Extract the ID from the job object
+        const jobId = job.id;
         const detailsApiUrl = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting";
         const detailsPayload = {
             operationName: "ApiJobPosting",

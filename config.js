@@ -20,13 +20,14 @@ import { aldiSudConfig } from './src/CompanyConfig/aldiSudConfig.js';
 import {  lidlDeConfig } from './src/CompanyConfig/lidlConfig.js';
 import { kauflandConfig } from './src/CompanyConfig/kauflandConfig.js';
 import { edekaConfig } from './src/CompanyConfig/edekaConfig.js';
+import { auto1GroupConfig } from './src/CompanyConfig/auto1GroupConfig.js';
 
 
 export const SITES_CONFIG = [
 // mercedesConfig,
 // datevConfig,
 // tradeRepublicConfig,
-almediaConfig,
+// almediaConfig,
 // redcarePhramacyConfig,
 // deutscheTelekomConfig,
 // airbusConfig,
@@ -41,5 +42,6 @@ almediaConfig,
 // lidlDeConfig,
 // kauflandConfig,
 // edekaConfig,
+auto1GroupConfig
 
   ];

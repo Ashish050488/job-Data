@@ -1,18 +1,19 @@
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
-import { isGermanRequired, getJobDetails  } from '../../grokAnalyzer.js';
-import { AbortController } from 'abort-controller';
+import { isGermanRequired, getJobDetails } from '../../grokAnalyzer.js';
 import { createJobModel } from '../models/jobModel.js';
-import fs from 'fs';
+import { AbortController } from 'abort-controller';
 
 /**
- * ✅ CORRECT: Filters a mapped job based on keywords found ONLY in the job title.
+ * ✅ FINAL: Filters based on keywords in BOTH the Job Title and the Description.
  */
 function filterJob(mappedJob, siteConfig) {
     const title = mappedJob.JobTitle.toLowerCase();
+    const description = mappedJob.Description.toLowerCase();
+    const textToSearch = title + ' ' + description; // Combine both for a comprehensive search
 
     if (siteConfig.filterKeywords && siteConfig.filterKeywords.length > 0) {
-        const hasPositiveKeyword = siteConfig.filterKeywords.some(kw => title.includes(kw.toLowerCase()));
+        const hasPositiveKeyword = siteConfig.filterKeywords.some(kw => textToSearch.includes(kw.toLowerCase()));
         if (!hasPositiveKeyword) return false;
     }
     if (siteConfig.negativeKeywords && siteConfig.negativeKeywords.length > 0) {
@@ -24,6 +25,7 @@ function filterJob(mappedJob, siteConfig) {
 
 /**
  * Scrapes job details from its webpage.
+ * (This function is unchanged)
  */
 async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
     console.log(`[${siteConfig.siteName}] Visiting job page for details: ${mappedJob.ApplicationURL}`);
@@ -40,11 +42,9 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
             },
             signal: pageController.signal
         });
-
         const html = await jobPageRes.text();
         const dom = new JSDOM(html);
         const document = dom.window.document;
-
         if (siteConfig.descriptionSelector) {
             const descriptionElement = document.querySelector(siteConfig.descriptionSelector);
             if (descriptionElement) {
@@ -59,6 +59,9 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
     return mappedJob;
 }
 
+/**
+ * ✅ FINAL: Processes a job with the correct logical order.
+ */
 export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders) {
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) {
         return null;
@@ -70,17 +73,14 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         return null;
     }
     
-    if (!filterJob(mappedJob, siteConfig)) {
-        return null;
-    }
-
-    if (siteConfig.needsDescriptionScraping) {
+    // Step 1: Get the full description from either the API (via mapper) or by scraping the page.
+    if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
         try {
-            if (siteConfig.getDetails) {
+            if (siteConfig.getDetails) { // For API-based detail fetching
                 const details = await siteConfig.getDetails(rawJob, sessionHeaders);
                 if (details.skip) return null;
                 mappedJob = { ...mappedJob, ...details };
-            } else {
+            } else { // For HTML-based page scraping
                 mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
             }
         } catch (pageError) {
@@ -89,17 +89,28 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         }
     }
     
-   const germanIsRequired = await isGermanRequired(mappedJob.Description);
+    // If there's still no description, discard the job.
+    if (!mappedJob.Description) {
+        return null;
+    }
+
+    // Step 2: Run the keyword filter now that we have the full description.
+    if (!filterJob(mappedJob, siteConfig)) {
+        return null;
+    }
+
+    // Step 3: AI Check for German Language Requirement.
+    const germanIsRequired = await isGermanRequired(mappedJob.Description, mappedJob.JobTitle);
     if (germanIsRequired) {
         console.log(`[${siteConfig.siteName}] Discarding job ${mappedJob.JobID} (German language is required).`);
         return null;
     }
 
-    // This call now only gets the experience estimate
+    // Step 4: AI Details Extraction.
     const aiDetails = await getJobDetails(mappedJob.Description, mappedJob.JobTitle);
     console.log(`[AI RESPONSE for ${mappedJob.JobID}]:`, aiDetails);
     
-    // The model now creates an object without a summary
+    // Step 5: Create the final object using the model.
     const finalJobData = createJobModel(mappedJob, aiDetails, siteConfig.siteName);
 
     return finalJobData;

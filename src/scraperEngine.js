@@ -2,7 +2,7 @@
 import { initializeSession, fetchJobsPage } from './scraper/network.js';
 import { shouldContinuePaging } from './scraper/pagination.js';
 import { processJob } from './scraper/processor.js';
-import { saveJobs } from "../databaseManager.js"; // <-- IMPORT saveJobs
+import { saveJobs } from "../databaseManager.js";
 import { sleep } from './utils.js';
 
 export async function scrapeSite(siteConfig, existingIDsMap) {
@@ -37,7 +37,13 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
             const batchSize = 3;
             for (let i = 0; i < jobs.length; i += batchSize) {
                 const batch = jobs.slice(i, i + batchSize);
-                console.log(`[${siteName}] Processing batch of ${batch.length} jobs...`);
+                
+                // ✅ THIS IS THE ONLY CHANGE: Replaced the old console.log with this more detailed one.
+                console.log(`\n[${siteName}]-- Processing Batch of ${batch.length} jobs --`);
+                batch.forEach(rawJob => {
+                    const jobTitle = rawJob._source ? rawJob._source.title : rawJob.title;
+                    console.log(`  -> Found job: ${jobTitle}`);
+                });
 
                 const jobPromises = batch.map(rawJob => 
                     processJob(rawJob, siteConfig, existingIDs, sessionHeaders)
@@ -47,8 +53,7 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                 const newJobsInBatch = processedJobs.filter(job => job !== null);
 
                 if (newJobsInBatch.length > 0) {
-                    // ✅ SAVE THE BATCH TO THE DATABASE IMMEDIATELY
-                    console.log(`[${siteName}] Saving batch of ${newJobsInBatch.length} jobs to the database...`);
+                    console.log(`[${siteName}] Saving ${newJobsInBatch.length} valid job(s) from batch to database...`);
                     const jobsToSave = newJobsInBatch.map(job => ({ ...job, scrapedAt: scrapeStartTime }));
                     await saveJobs(jobsToSave);
                     
@@ -69,9 +74,9 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
     }
 
     if (allNewJobs.length > 0) {
-        console.log(`[${siteName}] Finished. Found ${allNewJobs.length} total new jobs.`);
+        console.log(`\n[${siteName}] Finished. Found ${allNewJobs.length} total new jobs.`);
     } else {
-        console.log(`[${siteName}] No new jobs found.`);
+        console.log(`\n[${siteName}] No new jobs found.`);
     }
     return allNewJobs;
 }
