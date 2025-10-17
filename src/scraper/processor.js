@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { isGermanRequired, getJobDetails } from '../../grokAnalyzer.js';
 import { createJobModel } from '../models/jobModel.js';
 import { AbortController } from 'abort-controller';
-
+import fs from "fs"
 /**
  * ✅ FINAL: Filters based on keywords in BOTH the Job Title and the Description.
  */
@@ -43,6 +43,7 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
             signal: pageController.signal
         });
         const html = await jobPageRes.text();
+        //  fs.writeFileSync('debug.html', html); 
         const dom = new JSDOM(html);
         const document = dom.window.document;
         if (siteConfig.descriptionSelector) {

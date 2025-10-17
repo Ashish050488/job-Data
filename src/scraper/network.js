@@ -1,14 +1,13 @@
+// src/scraper/network.js
 import fetch from 'node-fetch';
 import { AbortController } from 'abort-controller';
 
 /**
- * Initializes a session for sites that require cookies.
- * @param {object} siteConfig - The configuration for the site.
- * @returns {Promise<object>} The session headers with the cookie.
+ * ✅ FINAL VERSION: Initializes a session and correctly handles CSRF tokens.
  */
 export async function initializeSession(siteConfig) {
     const sessionHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
     };
     if (!siteConfig.needsSession) return sessionHeaders;
 
@@ -18,9 +17,20 @@ export async function initializeSession(siteConfig) {
     try {
         console.log(`[${siteConfig.siteName}] Initializing session...`);
         const res = await fetch(siteConfig.baseUrl, { headers: sessionHeaders, signal: controller.signal });
-        const cookie = res.headers.get('set-cookie');
-        if (cookie) {
-            sessionHeaders['Cookie'] = cookie;
+        
+        // This site sends multiple cookies; we need to read them all.
+        const cookies = res.headers.raw()['set-cookie'];
+        if (cookies) {
+            // Join all cookies into a single string for the 'Cookie' header.
+            sessionHeaders['Cookie'] = cookies.join('; ');
+
+            // Find the specific XSRF-TOKEN from the array of cookies.
+            const xsrfCookie = cookies.find(c => c.startsWith('XSRF-TOKEN='));
+            if (xsrfCookie) {
+                const token = xsrfCookie.split(';')[0].split('=')[1];
+                // Add the required X-XSRF-TOKEN header for the POST request.
+                sessionHeaders['X-XSRF-TOKEN'] = decodeURIComponent(token);
+            }
         }
     } catch (error) {
         console.error(`[${siteConfig.siteName}] FAILED to initialize session: ${error.message}. Aborting.`);
@@ -33,11 +43,7 @@ export async function initializeSession(siteConfig) {
 
 /**
  * Fetches a single page of job listings from an API.
- * @param {object} siteConfig - The configuration for the site.
- * @param {number} offset - The current pagination offset.
- * @param {number} limit - The number of items per page.
- * @param {object} sessionHeaders - The headers for the request.
- * @returns {Promise<object>} The JSON response from the API.
+ * (This function does not need to be changed)
  */
 export async function fetchJobsPage(siteConfig, offset, limit, sessionHeaders) {
     const controller = new AbortController();
@@ -83,4 +89,3 @@ export async function fetchJobsPage(siteConfig, offset, limit, sessionHeaders) {
         clearTimeout(timeoutId);
     }
 }
-

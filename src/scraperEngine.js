@@ -40,9 +40,10 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                 
                 // ✅ THIS IS THE ONLY CHANGE: Replaced the old console.log with this more detailed one.
                 console.log(`\n[${siteName}]-- Processing Batch of ${batch.length} jobs --`);
-                batch.forEach(rawJob => {
+                batch.forEach((rawJob ,index)=> {
                     const jobTitle = rawJob._source ? rawJob._source.title : rawJob.title;
-                    console.log(`  -> Found job: ${jobTitle}`);
+                    const jobNumber = offset + i + index + 1; // Calculate the overall job number
+                    console.log(`  #${jobNumber}: Found job: ${jobTitle}`);
                 });
 
                 const jobPromises = batch.map(rawJob => 

@@ -21,6 +21,7 @@ import {  lidlDeConfig } from './src/CompanyConfig/lidlConfig.js';
 import { kauflandConfig } from './src/CompanyConfig/kauflandConfig.js';
 import { edekaConfig } from './src/CompanyConfig/edekaConfig.js';
 import { auto1GroupConfig } from './src/CompanyConfig/auto1GroupConfig.js';
+import { sixtConfig } from './src/CompanyConfig/sixtConfig.js';
 
 
 export const SITES_CONFIG = [
@@ -42,6 +43,7 @@ export const SITES_CONFIG = [
 // lidlDeConfig,
 // kauflandConfig,
 // edekaConfig,
-auto1GroupConfig
+// auto1GroupConfig,
+sixtConfig
 
   ];
