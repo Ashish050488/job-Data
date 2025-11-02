@@ -1,12 +1,13 @@
 // databaseManager.js
+import {createJobModel} from '../models/jobModel.js';
 import { MongoClient } from 'mongodb';
-import { MONGO_URI } from './env.js';
-import { SITES_CONFIG } from './config.js';
+import { MONGO_URI } from '../env.js';
+import { SITES_CONFIG } from '../config.js';
 
-const client = new MongoClient(MONGO_URI);
+export const client = new MongoClient(MONGO_URI);
 let db;
 
-async function connectToDb() {
+export async function connectToDb() {
     if (db) return db;
     await client.connect();
     db = client.db("job-scraper");
@@ -37,7 +38,7 @@ export async function saveJobs(jobs) {
     const operations = jobs.map(job => {
         // Separate the fields that should only be set on insert
         const { createdAt, ...updateData } = job;
-        
+
         return {
             updateOne: {
                 filter: { JobID: job.JobID, sourceSite: job.sourceSite },
@@ -65,6 +66,19 @@ export async function deleteOldJobs(siteName, scrapeStartTime) {
     }
 }
 
+
+export async function deleteJobById(jobId) { // 'jobId' is already an ObjectId
+    try {
+        const db = await connectToDb();
+        const jobsCollection = db.collection('jobs');
+
+        // JUST use 'jobId' directly
+        await jobsCollection.deleteOne({ _id: jobId });
+
+    } catch (error) {
+        console.error(`Error deleting job ${jobId}:`, error);
+    }
+}
 
 // In databaseManager.js - ADD THESE FUNCTIONS AT THE END
 
@@ -104,7 +118,7 @@ export async function findMatchingJobs(user) {
 export async function updateUserAfterEmail(userId, newSentJobIds) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
-    
+
     await usersCollection.updateOne(
         { _id: userId },
         {
@@ -113,3 +127,77 @@ export async function updateUserAfterEmail(userId, newSentJobIds) {
         }
     );
 }
+
+export async function getJobsPaginated(page = 1, limit = 50) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const skip = (page - 1) * limit;
+
+    const totalJobs = await jobsCollection.countDocuments();
+    const jobs = await jobsCollection.find({})
+        .sort({ PostedDate: -1, createdAt: -1 }) // Sort by date
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+    return { jobs, totalJobs };
+}
+
+
+export async function addCuratedJob(jobData) {
+    if (!jobData.JobTitle || !jobData.ApplicationURL || !jobData.Company) {
+        throw new Error('Job Title, URL, and Company are required.');
+    }
+
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    // Check for duplicate URL
+    const existingJob = await jobsCollection.findOne({ ApplicationURL: jobData.ApplicationURL });
+    if (existingJob) {
+        throw new Error('This Application URL already exists in the database.');
+    }
+
+    const jobID = `curated-${new Date().getTime()}`;
+
+    const jobToSave = createJobModel({ // <-- This line was causing the error
+        JobID: jobID,
+        JobTitle: jobData.JobTitle,
+        ApplicationURL: jobData.ApplicationURL,
+        Company: jobData.Company, // Your manual company name
+        Location: jobData.Location,
+        Department: jobData.Department,
+        GermanRequired: jobData.GermanRequired,
+        Description: jobData.Description || `Manually curated: ${jobData.JobTitle}`,
+        PostedDate: jobData.PostedDate || new Date().toISOString(),
+        ContractType: jobData.ContractType,
+        ExperienceLevel: jobData.ExperienceLevel,
+        isManual: true // Set this to true for curated jobs
+    }, "Curated");
+
+    await saveJobs([jobToSave]);
+    return jobToSave; // Return the created job
+}
+
+
+export async function getAllJobs(page = 1, limit = 50) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const skip = (page - 1) * limit;
+
+    const totalJobs = await jobsCollection.countDocuments();
+    const jobs = await jobsCollection.find({})
+        .sort({ PostedDate: -1, createdAt: -1 }) // Show newest first
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+    return {
+        jobs,
+        totalJobs,
+        totalPages: Math.ceil(totalJobs / limit),
+        currentPage: page
+    };
+}
+
+

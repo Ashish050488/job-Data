@@ -1,8 +1,8 @@
 import fs from 'fs';
 import csv from 'csv-parser';
 import { MongoClient } from 'mongodb';
-import { MONGO_URI } from './env.js';
-import { createUserModel } from './src/models/userModel.js';
+import { MONGO_URI } from '../env.js';
+import { createUserModel } from './models/userModel.js';
 
 const csvFilePath = './users.csv';
 

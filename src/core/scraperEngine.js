@@ -1,9 +1,9 @@
 // src/scraperEngine.js
-import { initializeSession, fetchJobsPage } from './scraper/network.js';
-import { shouldContinuePaging } from './scraper/pagination.js';
-import { processJob } from './scraper/processor.js';
-import { saveJobs } from "../databaseManager.js";
-import { sleep } from './utils.js';
+import { initializeSession, fetchJobsPage } from './network.js';
+import { shouldContinuePaging } from './pagination.js';
+import { processJob } from './processor.js';
+import { saveJobs } from "../Db/databaseManager.js";
+import { sleep } from '../utils.js';
 
 export async function scrapeSite(siteConfig, existingIDsMap) {
     const siteName = siteConfig.siteName;
@@ -38,11 +38,11 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
             for (let i = 0; i < jobs.length; i += batchSize) {
                 const batch = jobs.slice(i, i + batchSize);
                 
-                // ✅ THIS IS THE ONLY CHANGE: Replaced the old console.log with this more detailed one.
                 console.log(`\n[${siteName}]-- Processing Batch of ${batch.length} jobs --`);
-                batch.forEach((rawJob ,index)=> {
-                    const jobTitle = rawJob._source ? rawJob._source.title : rawJob.title;
-                    const jobNumber = offset + i + index + 1; // Calculate the overall job number
+                batch.forEach((rawJob, index) => {
+                    // ✅ FIX: Added 'rawJob.PositionTitle' to this line to find the Mercedes-Benz job title.
+                    const jobTitle = rawJob._source ? rawJob._source.title : (rawJob.titel || rawJob.title || rawJob.PositionTitle);
+                    const jobNumber = offset + i + index + 1;
                     console.log(`  #${jobNumber}: Found job: ${jobTitle}`);
                 });
 

@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
-import { isGermanRequired, getJobDetails } from '../../grokAnalyzer.js';
+import { isGermanRequired } from "../grokAnalyzer.js";
 import { createJobModel } from '../models/jobModel.js';
 import { AbortController } from 'abort-controller';
 import fs from "fs"
@@ -107,12 +107,8 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         return null;
     }
 
-    // Step 4: AI Details Extraction.
-    const aiDetails = await getJobDetails(mappedJob.Description, mappedJob.JobTitle);
-    console.log(`[AI RESPONSE for ${mappedJob.JobID}]:`, aiDetails);
-    
-    // Step 5: Create the final object using the model.
-    const finalJobData = createJobModel(mappedJob, aiDetails, siteConfig.siteName);
+    // Step 4: Create the final object using the model.
+    const finalJobData = createJobModel(mappedJob, siteConfig.siteName);
 
     return finalJobData;
 }

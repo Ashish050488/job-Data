@@ -9,7 +9,6 @@ const jobSchemaDefinition = {
     JobTitle: { type: String, required: true, trim: true },
     ApplicationURL: { type: String, required: true },
     Description: { type: String, default: "" },
-    estimatedYearsOfExperience: { type: Number, default: null },
     GermanRequired: { type: Boolean, default: false },
     Location: { type: String, default: "N/A" },
     Company: { type: String, default: "N/A" },
@@ -21,6 +20,7 @@ const jobSchemaDefinition = {
     ExpirationDate: { type: Date, default: null },
     createdAt: { type: Date },
     updatedAt: { type: Date },
+    isManual: { type: Boolean, default: false }, // ✅ NEW FIELD: Default to false (scraped job)
 };
 
 class Job {
@@ -44,13 +44,11 @@ class Job {
                 if (schemaField.type === String) {
                     this[key] = schemaField.trim ? String(value).trim() : String(value);
                 } else if (schemaField.type === Number) {
-                    // ✅ THIS IS THE CRITICAL LOGIC
-                    // It safely handles converting the AI's response to a number
-                    // without accidentally turning it into null or 0.
                     const numValue = Number(value);
                     this[key] = isNaN(numValue) ? schemaField.default : numValue;
                 } else if (schemaField.type === Boolean) {
-                    this[key] = Boolean(value);
+                    // Special handling for the boolean field
+                    this[key] = (typeof value === 'boolean') ? value : Boolean(value);
                 } else if (schemaField.type === Date) {
                     this[key] = new Date(value);
                 } else {
@@ -64,15 +62,14 @@ class Job {
 /**
  * Factory function to create a validated Job object.
  */
-export function createJobModel(mappedJob, aiDetails, siteName) {
-    const normalizedAI = {
-        estimatedYearsOfExperience: aiDetails.estimatedYearsExperience ?? aiDetails.estimatedYearsOfExperience ?? null,
-    };
+export const createJobModel= (mappedJob, siteName)=> {
     const combinedData = {
         ...mappedJob,
-        ...normalizedAI, 
         sourceSite: siteName,
-        GermanRequired: false,
+        GermanRequired: mappedJob.GermanRequired || false,
+        // isManual flag must be set by the calling script
+        isManual: mappedJob.isManual || false, 
+        Company: mappedJob.Company || siteName,
     };
     
     return new Job(combinedData);

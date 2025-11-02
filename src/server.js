@@ -1,0 +1,74 @@
+import 'dotenv/config'; // Make sure to load environment variables first
+import express from 'express';
+import cors from 'cors';
+import cron from 'node-cron';
+import { client, connectToDb } from './Db/databaseManager.js';
+import { runScraper } from './tasks/runScraper.js';
+import { runValidator } from './tasks/runValidator.js';
+import { runMatcher } from './tasks/runMatcher.js';
+import { jobsApiRouter } from './api/jobs.routes.js';
+
+// --- Setup ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// --- Middleware ---
+app.use(cors()); // Allow your React app (on a different port) to make requests
+app.use(express.json()); // Allow the server to understand JSON request bodies
+
+// --- API Routes ---
+app.use('/api/jobs', jobsApiRouter); // All job-related routes are in a separate file
+
+// --- Health Check Endpoint ---
+app.get('/', (req, res) => {
+    res.send('Job Scraper Backend is running and healthy.');
+});
+
+// --- Start Server & Schedule Tasks ---
+app.listen(PORT, async () => {
+    try {
+        await connectToDb(); // Connect to MongoDB once when the server starts
+        console.log(`✅ API Server is running on http://localhost:${PORT}`);
+        console.log("Setting up scheduled tasks...");
+
+        // --- Scheduled Cron Jobs ---
+        
+        // Run the scraper every 6 hours (at 00:00, 06:00, 12:00, 18:00)
+        cron.schedule('0 */6 * * *', () => {
+            console.log('--- Cron Job: Running Scraper ---');
+            runScraper();
+        });
+
+        // Run the validator script once per day at 2:00 AM
+        cron.schedule('0 2 * * *', () => {
+            console.log('--- Cron Job: Running Validator ---');
+            runValidator();
+        });
+
+        // Run the email matcher script every Monday at 8:00 AM
+        cron.schedule('0 8 * * 1', () => {
+            console.log('--- Cron Job: Running Matcher ---');
+            runMatcher();
+        });
+
+        console.log("✅ Cron tasks are scheduled.");
+
+        // --- FOR TESTING ONLY ---
+        // Run the scraper once right now when the server starts.
+        // You can comment this out once you are in production.
+        console.log('--- Running initial test scrape on start... ---');
+        runScraper();
+
+    } catch (err) {
+        console.error("Failed to start server or connect to DB", err);
+        process.exit(1);
+    }
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('Shutting down server and database connection...');
+    await client.close();
+    process.exit(0);
+});
+
