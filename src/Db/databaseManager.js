@@ -110,7 +110,7 @@ export async function findMatchingJobs(user) {
     }
 
     // Find the newest 5 jobs that match
-    return await jobsCollection.find(query).sort({ scrapedAt: -1 }).limit(5).toArray();
+    return await jobsCollection.find(query).sort({ scrapedAt: -1 }).limit(3).toArray();
 }
 
 

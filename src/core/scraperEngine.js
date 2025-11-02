@@ -41,7 +41,7 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                 console.log(`\n[${siteName}]-- Processing Batch of ${batch.length} jobs --`);
                 batch.forEach((rawJob, index) => {
                     // ✅ FIX: Added 'rawJob.PositionTitle' to this line to find the Mercedes-Benz job title.
-                    const jobTitle = rawJob._source ? rawJob._source.title : (rawJob.titel || rawJob.title || rawJob.PositionTitle);
+                    const jobTitle = rawJob._source ? rawJob._source.title : (rawJob.titel || rawJob.title || rawJob.PositionTitle || rawJob.job_title || rawJob.name || rawJob.jobFields?.jobTitle);
                     const jobNumber = offset + i + index + 1;
                     console.log(`  #${jobNumber}: Found job: ${jobTitle}`);
                 });

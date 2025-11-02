@@ -8,6 +8,7 @@ export const tradeRepublicConfig =  {
     filterKeywords: [...COMMON_KEYWORDS,], // We can add extra keywords like this
     getBody: () => null,
     getJobs: (data) => data?.jobs || [],
+    getTotal: (data) => data?.jobs?.length || 0,
     mapper: (job) => ({
       JobTitle: job.title || "",
       JobID: job.id ? String(job.id) : "",

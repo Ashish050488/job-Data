@@ -26,7 +26,7 @@ import { sixtConfig } from './CompanyConfig/sixtConfig.js';
 
 export const SITES_CONFIG = [
 // mercedesConfig,
-datevConfig,
+// datevConfig,
 // tradeRepublicConfig,
 // almediaConfig,
 // redcarePhramacyConfig,
@@ -44,6 +44,6 @@ datevConfig,
 // kauflandConfig,
 // edekaConfig,
 // auto1GroupConfig,
-// sixtConfig
+sixtConfig
 
   ];

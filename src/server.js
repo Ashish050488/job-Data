@@ -32,21 +32,21 @@ app.listen(PORT, async () => {
         console.log("Setting up scheduled tasks...");
 
         // --- Scheduled Cron Jobs ---
-        
-        // Run the scraper every 6 hours (at 00:00, 06:00, 12:00, 18:00)
-        cron.schedule('0 */6 * * *', () => {
+
+        // ✅ UPDATED: Run the scraper every day at 6:00 AM
+        cron.schedule('0 6 * * *', () => {
             console.log('--- Cron Job: Running Scraper ---');
             runScraper();
         });
 
-        // Run the validator script once per day at 2:00 AM
+        // Run the validator script once per day at 2:00 AM (No Change)
         cron.schedule('0 2 * * *', () => {
             console.log('--- Cron Job: Running Validator ---');
             runValidator();
         });
 
-        // Run the email matcher script every Monday at 8:00 AM
-        cron.schedule('0 8 * * 1', () => {
+        // ✅ UPDATED: Run the email matcher script every two days at 8:00 AM
+        cron.schedule('0 8 */2 * *', () => {
             console.log('--- Cron Job: Running Matcher ---');
             runMatcher();
         });
@@ -56,8 +56,8 @@ app.listen(PORT, async () => {
         // --- FOR TESTING ONLY ---
         // Run the scraper once right now when the server starts.
         // You can comment this out once you are in production.
-        console.log('--- Running initial test scrape on start... ---');
-        runScraper();
+        // console.log('--- Running initial test scrape on start... ---');
+        // runScraper();
 
     } catch (err) {
         console.error("Failed to start server or connect to DB", err);
@@ -71,4 +71,3 @@ process.on('SIGINT', async () => {
     await client.close();
     process.exit(0);
 });
-

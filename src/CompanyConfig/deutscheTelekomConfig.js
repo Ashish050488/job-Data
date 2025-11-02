@@ -1,43 +1,56 @@
-import { StripHtml, COMMON_KEYWORDS } from "../utils.js"
+import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
 
-
-export const deutscheTelekomConfig=  {
-    // The name for our logs and Excel sheet.
+export const deutscheTelekomConfig = {
     siteName: "Deutsche Telekom",
-    // The API URL you discovered, cleaned up to get all jobs in Germany.
-    apiUrl: "https://www.telekom.com/service/globaljobsearch/en/558550?countries=393776",
-    refererUrl: "https://www.telekom.com/en/careers/jobsearch",
-    // It is a GET request.
-    method: "GET",
-    // This flag tells our main.js engine to perform the second step.
-    needsDescriptionScraping: true,
-    // This is the unique "address" for the description we just found.
-    descriptionSelector: 'div.richtext.raw',
-    // The location is in the first API call, so we don't need a real selector for it.
-    // We set a placeholder so the script doesn't crash if it looks for one.
-    locationSelector: 'h1',
-    filterKeywords: [...COMMON_KEYWORDS],
-    // A GET request does not have a body.
-    getBody: () => null,
-    // The list of jobs is inside the 'results.jobs' array in the response.
-    getJobs: (data) => data?.results?.jobs || [],
+    
+    // ✅ FIX: Using the new API URL you found
+    apiUrl: "https://careers.telekom.com/api/jobs-proxy/search",
+    
+    // ✅ FIX: Changed to POST
+    method: "POST",
 
-    // This mapper translates the data from the FIRST API call.
-    // The Description will be filled in by our second step.
+    // ✅ FIX: This API is paginated with query params, not in the body.
+    // We create a function to build the URL with the correct page number.
+    buildPageUrl: (offset, limit) => {
+        // The API uses 1-based page numbers, not 0-based offset
+        const page = Math.floor(offset / limit) + 1;
+        return `${deutscheTelekomConfig.apiUrl}?page=${page}`;
+    },
+
+    // ✅ FIX: This is the simple payload body the POST request needs.
+    // The page number is handled in the URL now.
+    getBody: (offset, limit) => ({
+        user_query: "",
+        locale: "en"
+    }),
+
+    // ✅ FIX: The jobs are in the `data` array
+    getJobs: (data) => data?.data || [],
+    
+    // ✅ FIX: The total count is in `pagination_info.count`
+    getTotal: (data) => data?.pagination_info?.count || 0,
+
+    // ✅ FIX: We no longer need to scrape the details page.
+    // The new API provides the full description in the first call!
+    // This makes the scraper much faster.
+    needsDescriptionScraping: false,
+
+    filterKeywords: [...COMMON_KEYWORDS],
+
+    // ✅ FIX: Mapper is completely updated for the new API structure
     mapper: (job) => ({
-      JobTitle: job.title || "",
-      // The API doesn't provide a unique ID, so we will create one from the URL.
-      // This takes the last part of the URL (e.g., "233087") to use as an ID.
-      JobID: (job.url || "").split('_').pop(),
-      // The locations are in a simple array, so we join them.
-      Location: (job.locations || []).join(' | '),
-      PostingDate: job.date || "",
-      Department: job.division || "N/A",
-      Description: "", // This will be filled in by the second step.
-      // We must build the full URL from the base URL and the partial path.
-      ApplicationURL: `https://www.telekom.com${job.url || ""}`,
-      ContractType: job.hours || "N/A",
-      ExperienceLevel: "N/A", // This is not provided by the API.
-      Compensation: "N/A" // This is not provided by the API.
+        JobTitle: job.job_title || "",
+        JobID: job.requisition_id || "",
+        Location: job.location || `${job.city}, ${job.country}`,
+        PostingDate: job.creation_datetime || "",
+        Department: job.category || "N/A",
+        
+        // We get the full description directly from the API
+        Description: StripHtml(job.job_description || ""), 
+        
+        ApplicationURL: job.apply_url || "",
+        ContractType: job.job_type || "N/A",
+        ExperienceLevel: job.experience_level || "N/A",
+        Company: job.company || "Deutsche Telekom"
     })
-  }
+};

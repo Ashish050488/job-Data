@@ -16,6 +16,7 @@ export const aldiSudConfig = {
     
     // This tells the new processor to run the scraping logic
     needsDescriptionScraping: true,
+    descriptionSelector: '.description',
 
     mapper: (rawJob) => {
         return {
