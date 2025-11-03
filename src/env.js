@@ -9,7 +9,7 @@ export const EMAIL_CONFIG = {
     secure: false,
     auth: {
         user: 'ashar050488@gmail.com',
-        pass: process.env.pass // Your App Password
+        pass: process.env.pass 
     },
     to: 'ashishar050488@gmail.com', // Double-check this is the intended recipient
     from: '"Job Scraper Bot" <ashar050488@gmail.com>' // Corrected: Must match auth user
