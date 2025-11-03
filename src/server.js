@@ -57,7 +57,7 @@ app.listen(PORT, async () => {
         // Run the scraper once right now when the server starts.
         // You can comment this out once you are in production.
         // console.log('--- Running initial test scrape on start... ---');
-        runScraper();
+        // runScraper();
 
     } catch (err) {
         console.error("Failed to start server or connect to DB", err);
