@@ -54,9 +54,9 @@ app.listen(PORT, async () => {
         console.log("✅ Cron tasks are scheduled.");
 
         // --- FOR TESTING ONLY ---
-        // Run the scraper once right now when the server starts.
-        // You can comment this out once you are in production.
-        // console.log('--- Running initial test scrape on start... ---');
+        // ✅ UPDATED: This block is now UNCOMMENTED.
+        // This will run the scraper ONCE every time the server starts.
+        console.log('--- Running initial scrape on start... ---');
         runScraper();
 
     } catch (err) {
