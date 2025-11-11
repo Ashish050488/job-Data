@@ -20,7 +20,7 @@ const jobSchemaDefinition = {
     ExpirationDate: { type: Date, default: null },
     createdAt: { type: Date },
     updatedAt: { type: Date },
-    isManual: { type: Boolean, default: false }, // ✅ NEW FIELD: Default to false (scraped job)
+    isManual: { type: Boolean, default: false },
 };
 
 class Job {
@@ -47,10 +47,13 @@ class Job {
                     const numValue = Number(value);
                     this[key] = isNaN(numValue) ? schemaField.default : numValue;
                 } else if (schemaField.type === Boolean) {
-                    // Special handling for the boolean field
                     this[key] = (typeof value === 'boolean') ? value : Boolean(value);
                 } else if (schemaField.type === Date) {
-                    this[key] = new Date(value);
+                    if (value) {
+                        this[key] = new Date(value);
+                    } else {
+                        this[key] = null; // Store it as null
+                    }
                 } else {
                     this[key] = value;
                 }
@@ -62,12 +65,11 @@ class Job {
 /**
  * Factory function to create a validated Job object.
  */
-export const createJobModel= (mappedJob, siteName)=> {
+export const createJobModel = (mappedJob, siteName) => {
     const combinedData = {
         ...mappedJob,
         sourceSite: siteName,
         GermanRequired: mappedJob.GermanRequired || false,
-        // isManual flag must be set by the calling script
         isManual: mappedJob.isManual || false, 
         Company: mappedJob.Company || siteName,
     };

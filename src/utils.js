@@ -50,7 +50,6 @@ export const COMMON_KEYWORDS =// A new, targeted filterKeywords array based on y
     "direktor",
     "geschäftsführer",  // German for Managing Director / CEO
     "vorstand"          // German for Executive Board Member
-
 ]
 // [
 //     // --- Roles & Titles ---

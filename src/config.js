@@ -17,6 +17,7 @@ import { covestroConfig } from './CompanyConfig/covestroConfig.js';
 import { brenntagConfig } from './CompanyConfig/brenntagConfig.js';
 import { qiagenConfig } from './CompanyConfig/qiagenConfig.js';
 import { aldiSudConfig } from './CompanyConfig/aldiSudConfig.js';
+import {  lidlDeConfig } from './CompanyConfig/lidlConfig.js';
 import { kauflandConfig } from './CompanyConfig/kauflandConfig.js';
 import { edekaConfig } from './CompanyConfig/edekaConfig.js';
 import { auto1GroupConfig } from './CompanyConfig/auto1GroupConfig.js';
@@ -24,24 +25,25 @@ import { sixtConfig } from './CompanyConfig/sixtConfig.js';
 
 
 export const SITES_CONFIG = [
-// mercedesConfig,
-// datevConfig,
-// tradeRepublicConfig,
-// almediaConfig,
-// redcarePhramacyConfig,
-// deutscheTelekomConfig,
-// airbusConfig,
-// infineonConfig,
-// heidelbergMaterialsConfig,
-// commerzbankConfig,
-// symriseConfig,
-// covestroConfig,
-// brenntagConfig,
-// qiagenConfig,
-// aldiSudConfig,
-// kauflandConfig,
-// edekaConfig,
-// auto1GroupConfig,
-// sixtConfig
+mercedesConfig,
+datevConfig,
+tradeRepublicConfig,
+almediaConfig,
+redcarePhramacyConfig,
+deutscheTelekomConfig,
+airbusConfig,
+infineonConfig,
+heidelbergMaterialsConfig,
+commerzbankConfig,
+symriseConfig,
+covestroConfig,
+brenntagConfig,
+qiagenConfig,
+aldiSudConfig,
+lidlDeConfig,
+kauflandConfig,
+edekaConfig,
+auto1GroupConfig,
+sixtConfig
 
   ];

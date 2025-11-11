@@ -4,17 +4,25 @@ import { isGermanRequired } from "../grokAnalyzer.js";
 import { createJobModel } from '../models/jobModel.js';
 import { AbortController } from 'abort-controller';
 import fs from "fs"
+
 /**
- * ✅ FINAL: Filters based on keywords in BOTH the Job Title and the Description.
+ * ✅ NEW LOGIC: This filter now ONLY checks the JobTitle.
+ * This is the main fix to stop processing thousands of irrelevant jobs.
  */
 function filterJob(mappedJob, siteConfig) {
     const title = mappedJob.JobTitle.toLowerCase();
-    const description = mappedJob.Description.toLowerCase();
-    const textToSearch = title + ' ' + description; // Combine both for a comprehensive search
+    // const description = mappedJob.Description.toLowerCase(); // No longer needed
+    // const textToSearch = title + ' ' + description; // No longer needed
 
     if (siteConfig.filterKeywords && siteConfig.filterKeywords.length > 0) {
-        const hasPositiveKeyword = siteConfig.filterKeywords.some(kw => textToSearch.includes(kw.toLowerCase()));
-        if (!hasPositiveKeyword) return false;
+        // --- THIS IS THE CHANGE ---
+        // We now only search in the 'title'
+        const hasPositiveKeyword = siteConfig.filterKeywords.some(kw => title.includes(kw.toLowerCase()));
+        if (!hasPositiveKeyword) {
+            // Log for debugging (optional)
+            // console.log(`[Filter] Discarding (Title): ${mappedJob.JobTitle}`);
+            return false;
+        }
     }
     if (siteConfig.negativeKeywords && siteConfig.negativeKeywords.length > 0) {
         const hasNegativeKeyword = siteConfig.negativeKeywords.some(kw => title.includes(kw.toLowerCase()));
@@ -73,6 +81,14 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     if (!mappedJob.JobID || existingIDs.has(mappedJob.JobID)) {
         return null;
     }
+
+    // ✅ NEW LOGIC STEP:
+    // Run the Title-Only filter *before* getting the description.
+    // This saves us from visiting the page if the title doesn't even match.
+    // Note: This requires mappers to map JobTitle, which they all do.
+    if (!filterJob(mappedJob, siteConfig)) {
+        return null;
+    }
     
     // Step 1: Get the full description from either the API (via mapper) or by scraping the page.
     if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
@@ -90,17 +106,20 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         }
     }
     
-    // If there's still no description, discard the job.
+    // If there's still no description (e.g., from an API job), discard it.
     if (!mappedJob.Description) {
         return null;
     }
 
-    // Step 2: Run the keyword filter now that we have the full description.
+    // Step 2: Run the keyword filter AGAIN (this is fine, it's very fast)
+    // The first pass was just on title, this pass is also on title.
+    // This step is no longer strictly necessary but acts as a good safety check.
     if (!filterJob(mappedJob, siteConfig)) {
         return null;
     }
 
     // Step 3: AI Check for German Language Requirement.
+    // This now only runs on jobs that have already passed the title filter.
     const germanIsRequired = await isGermanRequired(mappedJob.Description, mappedJob.JobTitle);
     if (germanIsRequired) {
         console.log(`[${siteConfig.siteName}] Discarding job ${mappedJob.JobID} (German language is required).`);
