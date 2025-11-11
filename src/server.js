@@ -53,11 +53,13 @@ app.listen(PORT, async () => {
 
         console.log("✅ Cron tasks are scheduled.");
 
-        // --- FOR TESTING ONLY ---
+        // --- FOR TESTING ONLY --- 
         // ✅ UPDATED: This block is now UNCOMMENTED.
         // This will run the scraper ONCE every time the server starts.
         console.log('--- Running initial scrape on start... ---');
         runScraper();
+        runValidator();
+
 
     } catch (err) {
         console.error("Failed to start server or connect to DB", err);
