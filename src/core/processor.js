@@ -68,9 +68,6 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
     return mappedJob;
 }
 
-/**
- * ✅ FINAL: Processes a job with the correct logical order.
- */
 export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders) {
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) {
         return null;
@@ -106,7 +103,6 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         }
     }
     
-    // If there's still no description (e.g., from an API job), discard it.
     if (!mappedJob.Description) {
         return null;
     }
