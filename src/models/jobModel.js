@@ -49,10 +49,9 @@ class Job {
                 } else if (schemaField.type === Boolean) {
                     this[key] = (typeof value === 'boolean') ? value : Boolean(value);
                 } else if (schemaField.type === Date) {
-                    if (value) {
-                        this[key] = new Date(value);
-                    } else {
-                        this[key] = null; // Store it as null
+                    const dateObj = new Date(value);
+                    if (value && !isNaN(dateObj.getTime())) {
+                        this[key] = dateObj;
                     }
                 } else {
                     this[key] = value;
