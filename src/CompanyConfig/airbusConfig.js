@@ -38,7 +38,7 @@ export const airbusConfig ={
             PostingDate: job.postedOn || "",
             Department: "",
             Description: "",
-            ApplicationURL: `https://ag.wd3.myworkdayjobs.com/wday/cxs/ag/Airbus${job.externalPath}`,
+            ApplicationURL: `https://ag.wd3.myworkdayjobs.com/Airbus${job.externalPath}`,
             ContractType: "",
             ExperienceLevel: "N/A",
             Compensation: "N/A"

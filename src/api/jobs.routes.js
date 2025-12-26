@@ -2,11 +2,24 @@ import { Router } from 'express';
 import { 
     getJobsPaginated, 
     addCuratedJob, 
-    deleteJobById 
-} from '../Db/databaseManager.js'; // Note the '../' to go up one level
+    deleteJobById,
+    getPublicBaitJobs 
+} from '../Db/databaseManager.js'; 
 import { ObjectId } from 'mongodb';
 
 export const jobsApiRouter = Router();
+
+// ✅ FIX 1: This MUST be the first route defined
+// If it is below /:id, the server will crash.
+jobsApiRouter.get('/public-bait', async (req, res) => {
+    try {
+        const jobs = await getPublicBaitJobs();
+        res.status(200).json(jobs);
+    } catch (error) {
+        console.error('[API] Error fetching bait jobs:', error.message);
+        res.status(500).json({ error: "Failed to load latest jobs" });
+    }
+});
 
 /**
  * GET /api/jobs
@@ -33,17 +46,15 @@ jobsApiRouter.get('/', async (req, res) => {
 
 /**
  * POST /api/jobs
- * Manually adds a new "Curated" job. This replaces entry-server.js.
+ * Manually adds a new "Curated" job.
  */
 jobsApiRouter.post('/', async (req, res) => {
     try {
         const jobData = req.body;
-        // This function now contains the duplicate check logic
         const newJob = await addCuratedJob(jobData); 
         res.status(201).json(newJob);
     } catch (error) {
         console.error('[API] Error saving job:', error.message);
-        // Handle duplicate URL error specifically
         if (error.message.includes('duplicate URL')) {
             return res.status(409).json({ error: error.message });
         }
@@ -53,7 +64,6 @@ jobsApiRouter.post('/', async (req, res) => {
 
 /**
  * DELETE /api/jobs/:id
- * Deletes a job by its MongoDB _id.
  */
 jobsApiRouter.delete('/:id', async (req, res) => {
     try {
@@ -68,4 +78,3 @@ jobsApiRouter.delete('/:id', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-

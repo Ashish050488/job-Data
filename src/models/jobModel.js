@@ -25,8 +25,9 @@ const jobSchemaDefinition = {
 
 class Job {
     constructor(data) {
-        this.createdAt = data.createdAt || new Date();
-        this.updatedAt = new Date();
+        this.createdAt = data.createdAt ? new Date(data.createdAt) : new Date();
+        this.updatedAt = new Date(); 
+        this.scrapedAt = new Date();
 
         for (const key in jobSchemaDefinition) {
             if (key === 'createdAt' || key === 'updatedAt') continue;

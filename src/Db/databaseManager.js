@@ -3,6 +3,7 @@ import {createJobModel} from '../models/jobModel.js';
 import { MongoClient } from 'mongodb';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
+import { createUserModel } from '../models/userModel.js';
 
 export const client = new MongoClient(MONGO_URI);
 let db;
@@ -36,15 +37,21 @@ export async function saveJobs(jobs) {
     const jobsCollection = db.collection('jobs');
 
     const operations = jobs.map(job => {
-        // Separate the fields that should only be set on insert
-        const { createdAt, ...updateData } = job;
+        // 1. Remove timestamps from the object so the DB can handle them strictly
+        const { createdAt, updatedAt, ...pureJobData } = job;
 
         return {
             updateOne: {
                 filter: { JobID: job.JobID, sourceSite: job.sourceSite },
                 update: {
-                    $set: updateData, // Update all fields
-                    $setOnInsert: { createdAt: createdAt } // Only set createdAt when a new document is inserted
+                    // 2. $set: Update job details and always refresh updatedAt/scrapedAt
+                    $set: { 
+                        ...pureJobData, 
+                        updatedAt: new Date(),
+                        scrapedAt: new Date() 
+                    }, 
+                    // 3. $setOnInsert: ONLY set createdAt if the job is brand new
+                    $setOnInsert: { createdAt: new Date() } 
                 },
                 upsert: true,
             },
@@ -200,4 +207,67 @@ export async function getAllJobs(page = 1, limit = 50) {
     };
 }
 
+
+
+export async function getPublicBaitJobs() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    
+    // Fetch only specific fields to minimize data leakage
+    const jobs = await jobsCollection.find({ 
+        GermanRequired: false // Only show English jobs
+    })
+    .sort({ PostedDate: -1, createdAt: -1 }) // Newest first
+    .limit(9) // HARD LIMIT: Only 9 jobs
+    .project({ 
+        JobTitle: 1, 
+        Company: 1, 
+        Location: 1, 
+        Department: 1, 
+        PostedDate: 1, 
+        ApplicationURL: 1, 
+        GermanRequired: 1 
+        // Note: We EXCLUDE internal IDs or scrape metadata if possible
+    })
+    .toArray();
+
+    return jobs;
+}
+
+
+
+export async function addSubscriber(data) {
+    const db = await connectToDb();
+    const usersCollection = db.collection('users');
+
+    // Create a user object using the factory
+    const newUser = createUserModel({
+        email: data.email,
+        desiredDomains: data.categories, 
+        emailFrequency: data.frequency,
+        name: data.email.split('@')[0], 
+        createdAt: new Date()
+    });
+
+    // Upsert: Update if exists, Insert if new
+    await usersCollection.updateOne(
+        { email: newUser.email },
+        { 
+            $set: { 
+                desiredDomains: newUser.desiredDomains,
+                emailFrequency: newUser.emailFrequency,
+                isSubscribed: true,
+                updatedAt: new Date()
+            },
+            $setOnInsert: {
+                createdAt: new Date(),
+                subscriptionTier: "free",
+                sentJobIds: []
+            }
+        },
+        { upsert: true }
+    );
+    
+    return { success: true, email: newUser.email };
+}
 

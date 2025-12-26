@@ -7,6 +7,7 @@ import { runScraper } from './tasks/runScraper.js';
 import { runValidator } from './tasks/runValidator.js';
 import { runMatcher } from './tasks/runMatcher.js';
 import { jobsApiRouter } from './api/jobs.routes.js';
+import { usersApiRouter } from './api/users.routes.js';
 
 // --- Setup ---
 const app = express();
@@ -18,6 +19,7 @@ app.use(express.json()); // Allow the server to understand JSON request bodies
 
 // --- API Routes ---
 app.use('/api/jobs', jobsApiRouter); // All job-related routes are in a separate file
+app.use('/api/users', usersApiRouter);
 
 // --- Health Check Endpoint ---
 app.get('/', (req, res) => {

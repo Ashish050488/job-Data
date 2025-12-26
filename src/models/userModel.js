@@ -5,10 +5,15 @@
 
 const userSchemaDefinition = {
     email: { type: String, required: true, trim: true },
-    name: { type: String, required: true, trim: true },
+    name: { type: String, default: "Subscriber", trim: true }, // Changed default
     desiredRoles: { type: Array, default: [] },
-    yearsOfExperience: { type: Number, default: 0 },
-    desiredDomains: { type: Array, default: [] },
+    
+    // --- NEW FIELDS ---
+    desiredDomains: { type: Array, default: [] }, // Stores "Tech", "Product"
+    emailFrequency: { type: String, default: "Weekly" }, 
+    subscriptionTier: { type: String, default: "free" }, 
+    // ------------------
+
     isSubscribed: { type: Boolean, default: true },
     lastEmailSent: { type: Date, default: null },
     sentJobIds: { type: Array, default: [] },

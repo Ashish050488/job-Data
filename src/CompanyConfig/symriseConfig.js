@@ -45,14 +45,12 @@ export const symriseConfig = {
     getTotal: (data) => data?.globals?.jobsCount || 0,
     getJobs: (data) => data?.jobs || [],
     
-    // ✅ FIX: This function now includes the required headers and uses the correct data paths.
     getDetails: async (job, sessionHeaders) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000);
         try {
             const detailsApiUrl = `https://emea3.recruitmentplatform.com/fo/rest/jobs/${job.id}/details`;
             
-            // The details endpoint requires the same custom headers as the main list.
             const res = await fetch(detailsApiUrl, { 
                 headers: { ...sessionHeaders, ...(symriseConfig.customHeaders || {}) }, 
                 signal: controller.signal 
@@ -62,7 +60,15 @@ export const symriseConfig = {
             
             const detailedJob = await res.json();
             
-            // Use the reliable date strings from the structuredData object.
+            // Check if customFields exist, otherwise fallback to structuredData description
+            let descriptionHtml = (detailedJob.customFields || [])
+                .map(field => `<h2>${field.title}</h2>\n${field.content}`)
+                .join('\n\n');
+
+            if (!descriptionHtml && detailedJob.structuredData?.description) {
+                descriptionHtml = detailedJob.structuredData.description;
+            }
+
             const postingDate = detailedJob.structuredData?.datePosted 
                 ? new Date(detailedJob.structuredData.datePosted).toISOString().split('T')[0] 
                 : "";
@@ -72,6 +78,8 @@ export const symriseConfig = {
                 : "";
             
             return {
+                // FALLBACK: Ensure Description is never just an empty string
+                Description: StripHtml(descriptionHtml) || "Description available on company site.",
                 PostingDate: postingDate,
                 ExpirationDate: expirationDate,
             };
@@ -84,23 +92,19 @@ export const symriseConfig = {
     },
     
     mapper: (job) => {
-        const description = (job.customFields || [])
-            .map(field => `<h2>${field.title}</h2>\n${field.content}`)
-            .join('\n\n');
+        const publicPostUrl = `https://www.symrise.com/your-career/search-and-apply/search-and-apply/?jobId=${job.id}&sortBy=DPOSTINGSTART&sortOrder=desc&languageSelect=EN`;
 
         return {
-            JobTitle: job.jobFields?.jobTitle || "",
-            JobID: String(job.jobFields?.id || ""),
+            JobTitle: job.jobFields?.jobTitle || job.jobFields?.sJobTitle || "N/A",
+            JobID: String(job.id || ""),
             Location: `${job.jobFields?.SLOVLIST6 || ""}, ${job.jobFields?.SLOVLIST5 || ""}`.replace(/^, /, ""),
-            PostingDate: "", // Placeholder, will be filled by getDetails
-            ExpirationDate: "", // Placeholder, will be filled by getDetails
+            PostingDate: "", 
             Department: job.jobFields?.SLOVLIST7 || "N/A",
-            Description: StripHtml(description),
-            ApplicationURL: job.jobFields?.applicationUrl || "",
+            Description: "", // Triggers getDetails in processor.js
+            ApplicationURL: publicPostUrl, 
             ContractType: job.jobFields?.CONTRACTTYPLABEL || "N/A",
             ExperienceLevel: "N/A",
-            Compensation: "N/A"
+            Company: "Symrise"
         };
     }
 };
-
