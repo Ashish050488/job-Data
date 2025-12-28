@@ -2,15 +2,16 @@ import { Router } from 'express';
 import { 
     getJobsPaginated, 
     addCuratedJob, 
-    deleteJobById,
-    getPublicBaitJobs 
+    deleteJobById, 
+    getPublicBaitJobs,
+    updateJobFeedback, // Import this
+    getRejectedJobs    // Import this
 } from '../Db/databaseManager.js'; 
 import { ObjectId } from 'mongodb';
 
 export const jobsApiRouter = Router();
 
 // ✅ FIX 1: This MUST be the first route defined
-// If it is below /:id, the server will crash.
 jobsApiRouter.get('/public-bait', async (req, res) => {
     try {
         const jobs = await getPublicBaitJobs();
@@ -21,26 +22,50 @@ jobsApiRouter.get('/public-bait', async (req, res) => {
     }
 });
 
+// ✅ GET /api/jobs/rejected (Protected route for dismissed jobs)
+jobsApiRouter.get('/rejected', async (req, res) => {
+    try {
+        const jobs = await getRejectedJobs();
+        res.status(200).json(jobs);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 /**
  * GET /api/jobs
- * Fetches all jobs from the database with pagination.
+ * Fetches all jobs from the database with pagination and optional company filter.
  */
 jobsApiRouter.get('/', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
+        const company = req.query.company || null; // Capture company param
 
-        const { jobs, totalJobs } = await getJobsPaginated(page, limit);
+        const { jobs, totalJobs, companies } = await getJobsPaginated(page, limit, company);
             
         res.status(200).json({
             jobs,
             totalJobs,
+            companies, // Send this to frontend
             totalPages: Math.ceil(totalJobs / limit),
             currentPage: page
         });
     } catch (error) {
         console.error('[API] Error fetching jobs:', error.message);
         res.status(500).json({ error: "Failed to fetch jobs" });
+    }
+});
+
+// ✅ PATCH /api/jobs/:id/feedback (Thumbs Up/Down)
+jobsApiRouter.patch('/:id/feedback', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body; // 'up' or 'down' or null
+        await updateJobFeedback(id, status);
+        res.status(200).json({ message: 'Feedback updated' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 

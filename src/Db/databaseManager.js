@@ -1,5 +1,4 @@
-// databaseManager.js
-import {createJobModel} from '../models/jobModel.js';
+import { createJobModel } from '../models/jobModel.js';
 import { MongoClient } from 'mongodb';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
@@ -37,20 +36,16 @@ export async function saveJobs(jobs) {
     const jobsCollection = db.collection('jobs');
 
     const operations = jobs.map(job => {
-        // 1. Remove timestamps from the object so the DB can handle them strictly
         const { createdAt, updatedAt, ...pureJobData } = job;
-
         return {
             updateOne: {
                 filter: { JobID: job.JobID, sourceSite: job.sourceSite },
                 update: {
-                    // 2. $set: Update job details and always refresh updatedAt/scrapedAt
                     $set: { 
                         ...pureJobData, 
                         updatedAt: new Date(),
                         scrapedAt: new Date() 
                     }, 
-                    // 3. $setOnInsert: ONLY set createdAt if the job is brand new
                     $setOnInsert: { createdAt: new Date() } 
                 },
                 upsert: true,
@@ -66,66 +61,46 @@ export async function deleteOldJobs(siteName, scrapeStartTime) {
     const jobsCollection = db.collection('jobs');
     const result = await jobsCollection.deleteMany({
         sourceSite: siteName,
-        updatedAt: { $lt: scrapeStartTime } // Use updatedAt for the check
+        updatedAt: { $lt: scrapeStartTime }
     });
     if (result.deletedCount > 0) {
         console.log(`[${siteName}] Deleted ${result.deletedCount} expired jobs.`);
     }
 }
 
-
-export async function deleteJobById(jobId) { // 'jobId' is already an ObjectId
+export async function deleteJobById(jobId) {
     try {
         const db = await connectToDb();
         const jobsCollection = db.collection('jobs');
-
-        // JUST use 'jobId' directly
         await jobsCollection.deleteOne({ _id: jobId });
-
     } catch (error) {
         console.error(`Error deleting job ${jobId}:`, error);
     }
 }
 
-// In databaseManager.js - ADD THESE FUNCTIONS AT THE END
-
-// Fetches all users who are subscribed to receive emails
 export async function getSubscribedUsers() {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
     return await usersCollection.find({ isSubscribed: true }).toArray();
 }
 
-// Finds jobs that match a user's specific criteria
 export async function findMatchingJobs(user) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-
-    // Build a query based on the user's preferences
     const query = {
-        // Only jobs not requiring German
         GermanRequired: false,
-        // The job's department must be one of the user's desired domains
         Department: { $in: user.desiredDomains },
-        // The job's ID must not be in the user's "already sent" list
         JobID: { $nin: user.sentJobIds },
     };
-
-    // This is a simple text search for the user's desired roles in the job title
     if (user.desiredRoles && user.desiredRoles.length > 0) {
         query.$text = { $search: user.desiredRoles.join(' ') };
     }
-
-    // Find the newest 5 jobs that match
     return await jobsCollection.find(query).sort({ scrapedAt: -1 }).limit(3).toArray();
 }
 
-
-// Updates a user's record after an email has been sent
 export async function updateUserAfterEmail(userId, newSentJobIds) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
-
     await usersCollection.updateOne(
         { _id: userId },
         {
@@ -135,43 +110,22 @@ export async function updateUserAfterEmail(userId, newSentJobIds) {
     );
 }
 
-export async function getJobsPaginated(page = 1, limit = 50) {
-    const db = await connectToDb();
-    const jobsCollection = db.collection('jobs');
-    const skip = (page - 1) * limit;
-
-    const totalJobs = await jobsCollection.countDocuments();
-    const jobs = await jobsCollection.find({})
-        .sort({ PostedDate: -1, createdAt: -1 }) // Sort by date
-        .skip(skip)
-        .limit(limit)
-        .toArray();
-
-    return { jobs, totalJobs };
-}
-
-
 export async function addCuratedJob(jobData) {
     if (!jobData.JobTitle || !jobData.ApplicationURL || !jobData.Company) {
         throw new Error('Job Title, URL, and Company are required.');
     }
-
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-
-    // Check for duplicate URL
     const existingJob = await jobsCollection.findOne({ ApplicationURL: jobData.ApplicationURL });
     if (existingJob) {
         throw new Error('This Application URL already exists in the database.');
     }
-
     const jobID = `curated-${new Date().getTime()}`;
-
-    const jobToSave = createJobModel({ // <-- This line was causing the error
+    const jobToSave = createJobModel({
         JobID: jobID,
         JobTitle: jobData.JobTitle,
         ApplicationURL: jobData.ApplicationURL,
-        Company: jobData.Company, // Your manual company name
+        Company: jobData.Company,
         Location: jobData.Location,
         Department: jobData.Department,
         GermanRequired: jobData.GermanRequired,
@@ -179,26 +133,23 @@ export async function addCuratedJob(jobData) {
         PostedDate: jobData.PostedDate || new Date().toISOString(),
         ContractType: jobData.ContractType,
         ExperienceLevel: jobData.ExperienceLevel,
-        isManual: true // Set this to true for curated jobs
+        isManual: true
     }, "Curated");
 
     await saveJobs([jobToSave]);
-    return jobToSave; // Return the created job
+    return jobToSave;
 }
-
 
 export async function getAllJobs(page = 1, limit = 50) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
-
     const totalJobs = await jobsCollection.countDocuments();
     const jobs = await jobsCollection.find({})
-        .sort({ PostedDate: -1, createdAt: -1 }) // Show newest first
+        .sort({ PostedDate: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .toArray();
-
     return {
         jobs,
         totalJobs,
@@ -207,40 +158,25 @@ export async function getAllJobs(page = 1, limit = 50) {
     };
 }
 
-
-
 export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-    
-    // Fetch only specific fields to minimize data leakage
     const jobs = await jobsCollection.find({ 
-        GermanRequired: false // Only show English jobs
+        GermanRequired: false 
     })
-    .sort({ PostedDate: -1, createdAt: -1 }) // Newest first
-    .limit(9) // HARD LIMIT: Only 9 jobs
+    .sort({ PostedDate: -1, createdAt: -1 })
+    .limit(9)
     .project({ 
-        JobTitle: 1, 
-        Company: 1, 
-        Location: 1, 
-        Department: 1, 
-        PostedDate: 1, 
-        ApplicationURL: 1, 
-        GermanRequired: 1 
-        // Note: We EXCLUDE internal IDs or scrape metadata if possible
+        JobTitle: 1, Company: 1, Location: 1, Department: 1, 
+        PostedDate: 1, ApplicationURL: 1, GermanRequired: 1 
     })
     .toArray();
-
     return jobs;
 }
-
-
 
 export async function addSubscriber(data) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
-
-    // Create a user object using the factory
     const newUser = createUserModel({
         email: data.email,
         desiredDomains: data.categories, 
@@ -248,8 +184,6 @@ export async function addSubscriber(data) {
         name: data.email.split('@')[0], 
         createdAt: new Date()
     });
-
-    // Upsert: Update if exists, Insert if new
     await usersCollection.updateOne(
         { email: newUser.email },
         { 
@@ -267,7 +201,56 @@ export async function addSubscriber(data) {
         },
         { upsert: true }
     );
-    
     return { success: true, email: newUser.email };
 }
 
+// --- NEW / UPDATED FUNCTIONS ---
+
+// 1. Updated Pagination with Filters and Company List
+export async function getJobsPaginated(page = 1, limit = 50, companyFilter = null) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const skip = (page - 1) * limit;
+
+    // Filter: Hide "down" voted jobs. The $ne operator includes docs where thumbStatus is missing.
+    const query = { 
+        thumbStatus: { $ne: 'down' } 
+    };
+
+    if (companyFilter) {
+        query.Company = { $regex: companyFilter, $options: 'i' }; 
+    }
+
+    const totalJobs = await jobsCollection.countDocuments(query);
+    const jobs = await jobsCollection.find(query)
+        .sort({ PostedDate: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+    
+    // Get unique companies (only for valid jobs)
+    const companies = await jobsCollection.distinct("Company", { thumbStatus: { $ne: 'down' } });
+
+    return { jobs, totalJobs, companies };
+}
+
+// 2. Get Rejected Jobs
+export async function getRejectedJobs() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    return await jobsCollection.find({ thumbStatus: 'down' })
+        .sort({ updatedAt: -1 })
+        .toArray();
+}
+
+// 3. Update Job Feedback
+export async function updateJobFeedback(jobId, status) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const { ObjectId } = await import('mongodb'); 
+
+    await jobsCollection.updateOne(
+        { _id: new ObjectId(jobId) },
+        { $set: { thumbStatus: status, updatedAt: new Date() } }
+    );
+}
