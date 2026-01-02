@@ -1,4 +1,4 @@
-import { StripHtml } from "../utils.js";
+import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
 import fetch from 'node-fetch';
 import { AbortController } from 'abort-controller';
 
@@ -10,14 +10,9 @@ export const covestroConfig = {
     needsSession: true,
     needsDescriptionScraping: true,
 
-    filterKeywords: [
-        "project manager", "program manager", "product manager", "product owner",
-        "lead", "team lead", "tech lead", "engineering manager",
-        "head of", "director", "chief", "vp", "vice president",
-        "principal", "senior", "leiter", "manager", "direktor", "projektleiter", "teamleiter"
-    ],
+    // ✅ UPDATE: Use the shared global keywords list
+    filterKeywords: [...COMMON_KEYWORDS],
 
-    // This function builds the POST request to fetch all jobs from Germany.
     getBody: (offset, limit) => ({
         "appliedFacets": {
             "Location_Country": ["dcc5b7608d8644b3a93716604e78e995"]
@@ -81,4 +76,3 @@ export const covestroConfig = {
         Compensation: "N/A"
     })
 };
-

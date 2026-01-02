@@ -1,4 +1,3 @@
-// src/scraperEngine.js
 import { initializeSession, fetchJobsPage } from './network.js';
 import { shouldContinuePaging } from './pagination.js';
 import { processJob } from './processor.js';
@@ -34,16 +33,16 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                 totalJobs = siteConfig.getTotal(data);
             }
 
-            const batchSize = 3;
+            // Batch size 1 = Sequential processing
+            const batchSize = 1; 
+            
             for (let i = 0; i < jobs.length; i += batchSize) {
                 const batch = jobs.slice(i, i + batchSize);
                 
-                console.log(`\n[${siteName}]-- Processing Batch of ${batch.length} jobs --`);
                 batch.forEach((rawJob, index) => {
-                    // ✅ FIX: Added 'rawJob.PositionTitle' to this line to find the Mercedes-Benz job title.
                     const jobTitle = rawJob._source ? rawJob._source.title : (rawJob.titel || rawJob.title || rawJob.PositionTitle || rawJob.job_title || rawJob.name || rawJob.jobFields?.jobTitle);
                     const jobNumber = offset + i + index + 1;
-                    console.log(`  #${jobNumber}: Found job: ${jobTitle}`);
+                    console.log(`\n  #${jobNumber}: Analyzing: ${jobTitle}`);
                 });
 
                 const jobPromises = batch.map(rawJob => 
@@ -54,7 +53,7 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                 const newJobsInBatch = processedJobs.filter(job => job !== null);
 
                 if (newJobsInBatch.length > 0) {
-                    console.log(`[${siteName}] Saving ${newJobsInBatch.length} valid job(s) from batch to database...`);
+                    console.log(`   -> Saving ${newJobsInBatch.length} valid job(s)...`);
                     const jobsToSave = newJobsInBatch.map(job => ({ ...job, scrapedAt: scrapeStartTime }));
                     await saveJobs(jobsToSave);
                     
@@ -62,8 +61,9 @@ export async function scrapeSite(siteConfig, existingIDsMap) {
                     newJobsInBatch.forEach(job => existingIDs.add(job.JobID));
                 }
 
+                // ✅ FIX: Sleep 10 seconds to ensure we stay under the rate limit
                 if (i + batchSize < jobs.length) {
-                    await sleep(3000); 
+                    await sleep(10000); 
                 }
             }
             

@@ -1,16 +1,17 @@
-import dotev from "dotenv";
-dotev.config();
-export const GROQ_API_KEY= process.env.GROQ_API_KEY;
+import dotenv from "dotenv";
+dotenv.config();
+
+export const GROQ_API_KEY = process.env.GEMINI_API_KEY; // Get this from aistudio.google.com
 export const MONGO_URI = process.env.MONGO_URI;
 
 export const EMAIL_CONFIG = {
-    host: 'smtp.gmail.com', // Corrected: Use Gmail's server
+    host: 'smtp.gmail.com',
     port: 587,
     secure: false,
     auth: {
         user: 'ashar050488@gmail.com',
         pass: process.env.pass 
     },
-    to: 'ashishar050488@gmail.com', // Double-check this is the intended recipient
-    from: '"Job Scraper Bot" <ashar050488@gmail.com>' // Corrected: Must match auth user
+    to: 'ashishar050488@gmail.com',
+    from: '"Job Scraper Bot" <ashar050488@gmail.com>'
 };

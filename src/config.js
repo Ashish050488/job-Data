@@ -25,25 +25,25 @@ import { sixtConfig } from './CompanyConfig/sixtConfig.js';
 
 
 export const SITES_CONFIG = [
-mercedesConfig,
-datevConfig,
-tradeRepublicConfig,
+// mercedesConfig,
+// datevConfig,
+// tradeRepublicConfig,
 almediaConfig,
 redcarePhramacyConfig,
-deutscheTelekomConfig,
-airbusConfig,
-infineonConfig,
-heidelbergMaterialsConfig,
-commerzbankConfig,
-symriseConfig,
+// deutscheTelekomConfig,
+// airbusConfig,
+// infineonConfig,
+// heidelbergMaterialsConfig,
+// commerzbankConfig,
+// symriseConfig,
 covestroConfig,
-brenntagConfig,
-qiagenConfig,
+// brenntagConfig,
+// qiagenConfig,
 aldiSudConfig,
 lidlDeConfig,
-kauflandConfig,
-edekaConfig,
-auto1GroupConfig,
-sixtConfig
+// kauflandConfig,
+// edekaConfig,
+// auto1GroupConfig,
+// sixtConfig
 
   ];

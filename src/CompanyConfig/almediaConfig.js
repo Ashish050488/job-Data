@@ -6,12 +6,8 @@ export const almediaConfig = {
     apiUrl: "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams",
     method: "POST",
     needsDescriptionScraping: true,
-    filterKeywords: [...COMMON_KEYWORDS,],
+    filterKeywords: [...COMMON_KEYWORDS],
     
-    /**
-     * ✅ FIX 1: This function now ONLY fetches all jobs.
-     * The location filtering is handled by the new preFilter function below.
-     */
     getBody: (offset, limit, keywords, location) => {
         return {
             operationName: "ApiJobBoardWithTeams",
@@ -20,12 +16,11 @@ export const almediaConfig = {
         };
     },
     
-    /**
-     * ✅ FIX 2: Added a preFilter to check the location AFTER fetching.
-     * This will only keep jobs where the location is "Berlin".
-     */
+    // ✅ UPDATE: Relaxed filter. We let the AI decide if "Remote (Germany)" is valid.
     preFilter: (job) => {
-        return job.locationName?.toLowerCase() === 'berlin';
+        const loc = job.locationName?.toLowerCase() || "";
+        // Allow Berlin OR Remote OR Germany explicitly
+        return loc.includes('berlin') || loc.includes('germany') || loc.includes('remote');
     },
 
     getJobs: (data) => data?.data?.jobBoard?.jobPostings || [],

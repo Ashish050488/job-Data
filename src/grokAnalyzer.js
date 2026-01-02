@@ -1,77 +1,104 @@
-// grokAnalyzer.js
+// src/grokAnalyzer.js
 import Groq from "groq-sdk";
 import { GROQ_API_KEY } from './env.js';
 import { sleep } from './utils.js';
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
+
+// ✅ UPDATE: Switched to the latest supported model
+const MODEL_NAME = "llama-3.3-70b-versatile"; 
+
 const MAX_RETRIES = 3;
 
-export async function isGermanRequired(description, jobTitle = "") {
-    if (!description) return false;
+/**
+ * Analyzes a job description using Groq to determine quality.
+ */
+export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
+    if (!description || description.length < 50) return null;
 
-    // --- NEW SNIPPET LOGIC: Find the language context ---
-    const lowerDesc = description.toLowerCase();
-    const keywordIndex = lowerDesc.indexOf('german') !== -1 ? lowerDesc.indexOf('german') : lowerDesc.indexOf('deutsch');
+    // Truncate to safe limit
+    const descriptionSnippet = description.substring(0, 4000);
+
+    const prompt = `
+    You are a strict job classification engine. 
+    Analyze the following Job Title and Description snippet.
     
-    let descriptionSnippet = description;
-    if (description.length > 3000) {
-        if (keywordIndex !== -1) {
-            // Take 1500 chars around the keyword "German/Deutsch"
-            const start = Math.max(0, keywordIndex - 750);
-            const end = Math.min(description.length, keywordIndex + 750);
-            descriptionSnippet = `... ${description.substring(start, end)} ...`;
-        } else {
-            // Fallback to start/end if keyword not found
-            descriptionSnippet = `${description.substring(0, 1500)} ... ${description.substring(description.length - 1500)}`;
-        }
+    JOB TITLE: "${jobTitle}"
+    LOCATION RAW: "${locationRaw}"
+    DESCRIPTION: "${descriptionSnippet}..."
+
+    --- CLASSIFICATION RULES ---
+
+    1. LOCATION: 
+       - "Germany": If explicitly mentioned, or German cities (Berlin, Munich, Hamburg, etc.), or Remote ONLY if restricted to Germany.
+       - "Not Germany": If another country is named, or "Global/EMEA" without Germany.
+       - "Unclear": If no location is found.
+
+    2. LANGUAGE (German Required?):
+       - TRUE (Mandatory): If "German required", "Deutsch erforderlich", "Fluent German", "C1/C2", "Muttersprache".
+       - FALSE (English Friendly): If German is "nice to have", "plus", "optional", or English is the main working language.
+       - IF UNSURE: Set to TRUE (Conservative safety).
+
+    3. DOMAIN:
+       - "Technical": Software, Data, AI, DevOps, QA, IT Infrastructure.
+       - "Non-Technical": Product, Project Mgmt, Sales, Marketing, HR, Finance, Operations.
+       - "Unclear": If ambiguous.
+
+    4. SUB-DOMAIN:
+       - Tech: Frontend, Backend, Full Stack, Data, AI, Mobile, DevOps, Security.
+       - Non-Tech: Product, Project, Sales, Marketing, HR, Finance, Legal, Operations.
+
+    5. CONFIDENCE SCORE (0.0 - 1.0):
+       - How certain are you this is an English-speaking job located in Germany?
+
+    --- OUTPUT FORMAT ---
+    Return ONLY valid JSON. No Markdown. No text.
+    {
+      "location_classification": "Germany" | "Not Germany" | "Unclear",
+      "german_required": true | false,
+      "domain": "String",
+      "sub_domain": "String",
+      "confidence": Number
     }
+    `;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const completion = await groq.chat.completions.create({
-                model: "llama-3.1-8b-instant",
+            const chatCompletion = await groq.chat.completions.create({
                 messages: [
-                    { 
-                        role: "system", 
-                        content: `You are a strict language-requirement classifier for job descriptions. Your task is to determine whether German language proficiency is a MANDATORY requirement.
-                        
-                        DEFINITION OF MANDATORY:
-                        - Native/Mother tongue, Fluent, Business Fluent, or Professional Proficiency.
-                        - Any CEFR level (A1-C2) tied to German.
-                        - Phrases like: "German is mandatory", "must speak German", "Deutsch erforderlich", "zwingend erforderlich", "Muttersprache".
-
-                        DEFINITION OF NOT MANDATORY (Answer "No"):
-                        - German is not mentioned.
-                        - German is "nice to have", "a plus", "advantage", "optional", or "preferred".
-                        - The text states English is the working language and German is NOT required.
-
-                        Decision Rule: Mandatory wording always overrides optional wording. If uncertain, prioritize the strongest obligation language.` 
-                    },
-                    { 
-                        role: "user", 
-                        content: `Job Title: ${jobTitle}\n\nDescription Snippet: ${descriptionSnippet}\n\nIs German a mandatory requirement? Return ONLY "Yes" or "No".` 
-                    },
+                    { role: "system", content: "You are a JSON-only API. You must return pure JSON." },
+                    { role: "user", content: prompt }
                 ],
-                temperature: 0.1, // Keep it low for consistency
-                max_tokens: 5,
+                model: MODEL_NAME,
+                temperature: 0.1, // Low temp for consistency
+                response_format: { type: "json_object" } // Force JSON mode
             });
 
-            const answer = completion.choices[0]?.message?.content?.trim().toLowerCase();
-            console.log(`[AI Check] ${jobTitle.substring(0, 30)}... -> ${answer}`);
+            const content = chatCompletion.choices[0]?.message?.content;
+            if (!content) throw new Error("Empty response from Groq");
+
+            const data = JSON.parse(content);
             
-            return answer.includes('yes');
+            console.log(`[AI] ${jobTitle.substring(0, 15)}... | Req: ${data.german_required} | Loc: ${data.location_classification}`);
+            return data;
 
         } catch (err) {
-            if (err.status === 429 && attempt < MAX_RETRIES) {
-                const retryAfterMatch = err.message.match(/Please try again in ([\d.]+)/);
-                const retryAfter = retryAfterMatch ? parseFloat(retryAfterMatch[1]) * 1000 + 500 : 5000;
-                console.warn(`[AI] Rate limit hit. Retrying in ${retryAfter / 1000}s...`);
-                await sleep(retryAfter);
+            // Groq Rate Limit Handling (429)
+            if (err.status === 429 || err.message.includes('429')) {
+                console.warn(`[AI] Groq Rate Limit (Attempt ${attempt}). Waiting 20s...`);
+                await sleep(20000); 
             } else {
-                console.error(`Groq check failed: ${err.message}`);
-                return false;
+                console.warn(`[AI] Error: ${err.message}`);
+                if (attempt === MAX_RETRIES) return null;
+                await sleep(2000);
             }
         }
     }
-    return false;
+    return null;
+}
+
+// Keep generic wrapper for backward compatibility
+export async function isGermanRequired(description, jobTitle) {
+    const result = await analyzeJobWithGroq(jobTitle, description, "Unknown");
+    return result ? result.german_required : true; 
 }

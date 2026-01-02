@@ -1,57 +1,42 @@
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
-import { isGermanRequired } from "../grokAnalyzer.js";
-import { createJobModel } from '../models/jobModel.js';
 import { AbortController } from 'abort-controller';
-import fs from "fs"
+
+// ✅ FIX: Import the correct Groq function name
+import { analyzeJobWithGroq } from "../grokAnalyzer.js"; 
+import { createJobModel } from '../models/jobModel.js';
+import { BANNED_ROLES } from '../utils.js';
 
 /**
- * ✅ NEW LOGIC: This filter now ONLY checks the JobTitle.
- * This is the main fix to stop processing thousands of irrelevant jobs.
+ * 1. HARD PRE-FILTER
+ * Returns TRUE if the job should be REJECTED immediately.
  */
-function filterJob(mappedJob, siteConfig) {
-    const title = mappedJob.JobTitle.toLowerCase();
-    // const description = mappedJob.Description.toLowerCase(); // No longer needed
-    // const textToSearch = title + ' ' + description; // No longer needed
+function isSpamOrIrrelevant(title) {
+    const lowerTitle = title.toLowerCase();
+    
+    // Check banned roles
+    const isBanned = BANNED_ROLES.some(role => lowerTitle.includes(role));
+    if (isBanned) return true;
 
-    if (siteConfig.filterKeywords && siteConfig.filterKeywords.length > 0) {
-        // --- THIS IS THE CHANGE ---
-        // We now only search in the 'title'
-        const hasPositiveKeyword = siteConfig.filterKeywords.some(kw => title.includes(kw.toLowerCase()));
-        if (!hasPositiveKeyword) {
-            // Log for debugging (optional)
-            // console.log(`[Filter] Discarding (Title): ${mappedJob.JobTitle}`);
-            return false;
-        }
-    }
-    if (siteConfig.negativeKeywords && siteConfig.negativeKeywords.length > 0) {
-        const hasNegativeKeyword = siteConfig.negativeKeywords.some(kw => title.includes(kw.toLowerCase()));
-        if (hasNegativeKeyword) return false;
-    }
-    return true;
+    return false;
 }
 
 /**
  * Scrapes job details from its webpage.
- * (This function is unchanged)
  */
 async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
-    console.log(`[${siteConfig.siteName}] Visiting job page for details: ${mappedJob.ApplicationURL}`);
+    console.log(`[${siteConfig.siteName}] Visiting job page: ${mappedJob.ApplicationURL}`);
     const pageController = new AbortController();
     const pageTimeoutId = setTimeout(() => pageController.abort(), 30000);
     try {
         const jobPageRes = await fetch(mappedJob.ApplicationURL, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': siteConfig.baseUrl || 'https://www.google.com/'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept': 'text/html,application/xhtml+xml',
             },
             signal: pageController.signal
         });
         const html = await jobPageRes.text();
-        //  fs.writeFileSync('debug.html', html); 
         const dom = new JSDOM(html);
         const document = dom.window.document;
         if (siteConfig.descriptionSelector) {
@@ -61,7 +46,7 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
             }
         }
     } catch (error) {
-        throw error;
+        console.error(`[Scrape Error] ${error.message}`);
     } finally {
         clearTimeout(pageTimeoutId);
     }
@@ -69,60 +54,87 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
 }
 
 export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders) {
+    // 1. Config Pre-Filter (Country check usually)
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) {
         return null;
     }
 
     let mappedJob = siteConfig.mapper(rawJob);
 
+    // 2. Duplicate Check
     if (!mappedJob.JobID || existingIDs.has(mappedJob.JobID)) {
         return null;
     }
 
-    // ✅ NEW LOGIC STEP:
-    // Run the Title-Only filter *before* getting the description.
-    // This saves us from visiting the page if the title doesn't even match.
-    // Note: This requires mappers to map JobTitle, which they all do.
-    if (!filterJob(mappedJob, siteConfig)) {
-        return null;
+    // 3. TITLE FILTER (Hard Rejection of Student/Intern roles)
+    if (isSpamOrIrrelevant(mappedJob.JobTitle)) {
+        console.log(`[Pre-Filter] Rejected: ${mappedJob.JobTitle} (Banned Role)`);
+        return null; // Stop processing
+    }
+
+    // 4. Keyword Match (Optional)
+    if (siteConfig.filterKeywords && siteConfig.filterKeywords.length > 0) {
+        const titleLower = mappedJob.JobTitle.toLowerCase();
+        const hasKeyword = siteConfig.filterKeywords.some(kw => titleLower.includes(kw.toLowerCase()));
+        if (!hasKeyword) return null;
     }
     
-    // Step 1: Get the full description from either the API (via mapper) or by scraping the page.
+    // 5. Get Description
     if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
         try {
-            if (siteConfig.getDetails) { // For API-based detail fetching
+            if (siteConfig.getDetails) { 
                 const details = await siteConfig.getDetails(rawJob, sessionHeaders);
                 if (details.skip) return null;
                 mappedJob = { ...mappedJob, ...details };
-            } else { // For HTML-based page scraping
+            } else { 
                 mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
             }
         } catch (pageError) {
-            console.error(`[${siteConfig.siteName}] Failed to get details for job ${mappedJob.JobID}: ${pageError.message}`);
             return null;
         }
     }
     
-    if (!mappedJob.Description) {
+    if (!mappedJob.Description) return null;
+
+    // 6. 🧠 AI CLASSIFICATION (GROQ)
+    // ✅ FIX: Use the Groq function here
+    const aiResult = await analyzeJobWithGroq(mappedJob.JobTitle, mappedJob.Description, mappedJob.Location);
+
+    if (!aiResult) {
+        console.log(`[AI] Failed to analyze ${mappedJob.JobTitle}. Skipping.`);
         return null;
     }
 
-    // Step 2: Run the keyword filter AGAIN (this is fine, it's very fast)
-    // The first pass was just on title, this pass is also on title.
-    // This step is no longer strictly necessary but acts as a good safety check.
-    if (!filterJob(mappedJob, siteConfig)) {
-        return null;
+    // 7. DECISION MATRIX
+    let status = "review"; // Default
+    let rejectionReason = null;
+
+    if (aiResult.german_required === true) {
+        status = "rejected";
+        rejectionReason = "German Language Required";
+    } else if (aiResult.location_classification === "Not Germany") {
+        status = "rejected";
+        rejectionReason = "Location not Germany";
+    } else if (aiResult.location_classification === "Germany" && aiResult.confidence >= 0.85) {
+        status = "approved"; // High trust, auto-publish
+    } else {
+        status = "review"; // Low confidence or unsure
     }
 
-    // Step 3: AI Check for German Language Requirement.
-    // This now only runs on jobs that have already passed the title filter.
-    const germanIsRequired = await isGermanRequired(mappedJob.Description, mappedJob.JobTitle);
-    if (germanIsRequired) {
-        console.log(`[${siteConfig.siteName}] Discarding job ${mappedJob.JobID} (German language is required).`);
-        return null;
+    if (status === "rejected") {
+        console.log(`❌ [Rejected] ${mappedJob.JobTitle}: ${rejectionReason}`);
+        return null; 
     }
 
-    // Step 4: Create the final object using the model.
+    console.log(`✅ [${status.toUpperCase()}] ${mappedJob.JobTitle} (Conf: ${aiResult.confidence})`);
+
+    // 8. Create Model with AI Data
+    mappedJob.GermanRequired = aiResult.german_required;
+    mappedJob.Domain = aiResult.domain;
+    mappedJob.SubDomain = aiResult.sub_domain;
+    mappedJob.ConfidenceScore = aiResult.confidence;
+    mappedJob.Status = status;
+
     const finalJobData = createJobModel(mappedJob, siteConfig.siteName);
 
     return finalJobData;
