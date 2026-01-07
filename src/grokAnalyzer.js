@@ -1,22 +1,22 @@
-// src/grokAnalyzer.js
 import Groq from "groq-sdk";
 import { GROQ_API_KEY } from './env.js';
 import { sleep } from './utils.js';
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-// ✅ UPDATE: Switched to the latest supported model
+// Using the most versatile model. 
+// Fallback could be "llama-3.1-8b-instant" if this one is consistently overloaded.
 const MODEL_NAME = "llama-3.3-70b-versatile"; 
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5; // Increased retries since we are waiting smarter now
 
 /**
- * Analyzes a job description using Groq to determine quality.
+ * Analyzes a job description using Groq (Llama 3) to determine quality.
  */
 export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
     if (!description || description.length < 50) return null;
 
-    // Truncate to safe limit
+    // Truncate to save tokens but keep enough context
     const descriptionSnippet = description.substring(0, 4000);
 
     const prompt = `
@@ -27,17 +27,29 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
     LOCATION RAW: "${locationRaw}"
     DESCRIPTION: "${descriptionSnippet}..."
 
-    --- CLASSIFICATION RULES ---
+    --- 🧠 CLASSIFICATION RULES (READ CAREFULLY) ---
 
     1. LOCATION: 
-       - "Germany": If explicitly mentioned, or German cities (Berlin, Munich, Hamburg, etc.), or Remote ONLY if restricted to Germany.
-       - "Not Germany": If another country is named, or "Global/EMEA" without Germany.
+       - "Germany": If explicitly mentioned, or specific German cities (Berlin, Munich, Hamburg, etc.), or Remote ONLY if restricted to Germany.
+       - "Not Germany": If another country is named (e.g., "Austria", "Switzerland", "UK"), or "Global/EMEA" without Germany.
        - "Unclear": If no location is found.
 
     2. LANGUAGE (German Required?):
-       - TRUE (Mandatory): If "German required", "Deutsch erforderlich", "Fluent German", "C1/C2", "Muttersprache".
-       - FALSE (English Friendly): If German is "nice to have", "plus", "optional", or English is the main working language.
-       - IF UNSURE: Set to TRUE (Conservative safety).
+       - TRUE (Mandatory): ONLY if the text explicitly says:
+         * "German is mandatory"
+         * "Fluent German required"
+         * "Must speak German"
+         * "Deutschkenntnisse erforderlich"
+         * "Verhandlungssicher Deutsch"
+         * "C1/C2 German level"
+       
+       - FALSE (English Friendly): If the text says:
+         * "German is a plus" / "nice to have" / "beneficial" / "advantage"
+         * "English is the working language"
+         * "No German skills required"
+         * OR if German is NOT mentioned at all.
+       
+       - CRITICAL RULE: If both "English required" AND "German is a plus" appear, then german_required = FALSE.
 
     3. DOMAIN:
        - "Technical": Software, Data, AI, DevOps, QA, IT Infrastructure.
@@ -50,6 +62,8 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
 
     5. CONFIDENCE SCORE (0.0 - 1.0):
        - How certain are you this is an English-speaking job located in Germany?
+       - If location is "Remote" but country is unclear -> Low confidence (0.6).
+       - If "German is a plus" -> High confidence (0.9).
 
     --- OUTPUT FORMAT ---
     Return ONLY valid JSON. No Markdown. No text.
@@ -70,8 +84,8 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
                     { role: "user", content: prompt }
                 ],
                 model: MODEL_NAME,
-                temperature: 0.1, // Low temp for consistency
-                response_format: { type: "json_object" } // Force JSON mode
+                temperature: 0.1, 
+                response_format: { type: "json_object" } 
             });
 
             const content = chatCompletion.choices[0]?.message?.content;
@@ -79,14 +93,32 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
 
             const data = JSON.parse(content);
             
-            console.log(`[AI] ${jobTitle.substring(0, 15)}... | Req: ${data.german_required} | Loc: ${data.location_classification}`);
+            console.log(`[AI] ${jobTitle.substring(0, 20)}... | Req: ${data.german_required} | Loc: ${data.location_classification}`);
             return data;
 
         } catch (err) {
-            // Groq Rate Limit Handling (429)
+            // --- SMART RATE LIMIT HANDLING ---
             if (err.status === 429 || err.message.includes('429')) {
-                console.warn(`[AI] Groq Rate Limit (Attempt ${attempt}). Waiting 20s...`);
-                await sleep(20000); 
+                let waitTime = 60000; // Default fallback: 60s
+
+                // 1. Try to read 'retry-after' header directly
+                if (err.headers && err.headers['retry-after']) {
+                    const retryHeader = parseInt(err.headers['retry-after'], 10);
+                    if (!isNaN(retryHeader)) {
+                        waitTime = (retryHeader * 1000) + 1000; // Add 1s buffer
+                    }
+                } 
+                // 2. Try to parse "Please try again in X.XXs" from error message
+                else {
+                    const match = err.message.match(/try again in ([\d.]+)s/);
+                    if (match && match[1]) {
+                        waitTime = Math.ceil(parseFloat(match[1]) * 1000) + 1000; // Add 1s buffer
+                    }
+                }
+
+                console.warn(`[AI] Groq Rate Limit. Waiting exactly ${waitTime/1000}s...`);
+                await sleep(waitTime);
+                // Continue loop to retry immediately after waking up
             } else {
                 console.warn(`[AI] Error: ${err.message}`);
                 if (attempt === MAX_RETRIES) return null;
@@ -97,7 +129,6 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
     return null;
 }
 
-// Keep generic wrapper for backward compatibility
 export async function isGermanRequired(description, jobTitle) {
     const result = await analyzeJobWithGroq(jobTitle, description, "Unknown");
     return result ? result.german_required : true; 
