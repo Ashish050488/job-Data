@@ -254,3 +254,65 @@ export async function updateJobFeedback(jobId, status) {
         { $set: { thumbStatus: status, updatedAt: new Date() } }
     );
 }
+
+
+export async function getCompanyDirectoryStats() {
+    try {
+        console.log("Stats: Connecting to DB...");
+        const db = await connectToDb();
+        const jobsCollection = db.collection('jobs');
+
+        // Check if we have ANY jobs first
+        const count = await jobsCollection.countDocuments();
+        console.log(`Stats: Total jobs in DB: ${count}`);
+
+        if (count === 0) return [];
+
+        const pipeline = [
+            // 1. Filter out rejected jobs
+            { $match: { thumbStatus: { $ne: 'down' } } },
+            
+            // 2. Group by Company
+            {
+                $group: {
+                    _id: "$Company",
+                    openRoles: { $sum: 1 },
+                    locations: { $addToSet: "$Location" },
+                    // Get sample URL for domain guessing
+                    sampleUrl: { $first: "$ApplicationURL" } 
+                }
+            },
+            
+            // 3. Sort by most open roles
+            { $sort: { openRoles: -1 } }
+        ];
+
+        const stats = await jobsCollection.aggregate(pipeline).toArray();
+        console.log(`Stats: Found ${stats.length} companies.`);
+
+        return stats.map(stat => {
+            // Handle missing or null company names
+            const companyName = stat._id || "Unknown Company";
+            
+            // Handle locations safely
+            const validLocations = (stat.locations || []).filter(l => typeof l === 'string');
+            const distinctCities = [...new Set(
+                validLocations.map(loc => loc.split(',')[0].trim())
+            )].slice(0, 3); // Top 3 cities
+
+            // Create a safe domain string (remove spaces/special chars)
+            const cleanName = companyName.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+            return {
+                companyName: companyName,
+                openRoles: stat.openRoles,
+                cities: distinctCities,
+                domain: cleanName + ".com"
+            };
+        });
+
+    } catch (error) {
+        console.error("Stats: Aggregation failed:", error);
+        return []; // Return empty array on error so frontend doesn't crash
+    }
+}

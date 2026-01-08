@@ -5,7 +5,8 @@ import {
     deleteJobById, 
     getPublicBaitJobs,
     updateJobFeedback, // Import this
-    getRejectedJobs    // Import this
+    getRejectedJobs ,   // Import this
+    getCompanyDirectoryStats
 } from '../Db/databaseManager.js'; 
 import { ObjectId } from 'mongodb';
 
@@ -101,5 +102,16 @@ jobsApiRouter.delete('/:id', async (req, res) => {
     } catch (error) {
         console.error(`[API] Error deleting job:`, error.message);
         res.status(500).json({ error: error.message });
+    }
+});
+
+
+jobsApiRouter.get('/directory', async (req, res) => {
+    try {
+        const directory = await getCompanyDirectoryStats();
+        res.status(200).json(directory);
+    } catch (error) {
+        console.error('[API] Error fetching directory:', error.message);
+        res.status(500).json({ error: "Failed to load company directory" });
     }
 });
