@@ -36,14 +36,14 @@ redcarePhramacyConfig,
 // heidelbergMaterialsConfig,
 // commerzbankConfig,
 // symriseConfig,
-// covestroConfig,
+covestroConfig,
 // brenntagConfig,
 // qiagenConfig,
-// aldiSudConfig,
+aldiSudConfig,
 // lidlDeConfig,
 // kauflandConfig,
 // edekaConfig,
-// auto1GroupConfig,
-// sixtConfig
+auto1GroupConfig,
+sixtConfig
 
   ];
