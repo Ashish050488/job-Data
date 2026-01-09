@@ -6,7 +6,7 @@ const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 // Using the most versatile model. 
 // Fallback could be "llama-3.1-8b-instant" if this one is consistently overloaded.
-const MODEL_NAME = "llama-3.3-70b-versatile"; 
+const MODEL_NAME = "llama-3.1-8b-instant"; 
 
 const MAX_RETRIES = 5; // Increased retries since we are waiting smarter now
 
