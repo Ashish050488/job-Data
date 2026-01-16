@@ -3,6 +3,7 @@ import { MongoClient } from 'mongodb';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
+import { ObjectId } from 'mongodb';
 
 export const client = new MongoClient(MONGO_URI);
 let db;
@@ -207,13 +208,15 @@ export async function addSubscriber(data) {
 // --- NEW / UPDATED FUNCTIONS ---
 
 // 1. Updated Pagination with Filters and Company List
+// Ensure your getJobsPaginated looks like this:
 export async function getJobsPaginated(page = 1, limit = 50, companyFilter = null) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // Filter: Hide "down" voted jobs. The $ne operator includes docs where thumbStatus is missing.
+    // 🚨 CRITICAL FIX: Ensure 'Status' is 'active' here too
     const query = { 
+        Status: 'active', 
         thumbStatus: { $ne: 'down' } 
     };
 
@@ -228,10 +231,54 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
         .limit(limit)
         .toArray();
     
-    // Get unique companies (only for valid jobs)
-    const companies = await jobsCollection.distinct("Company", { thumbStatus: { $ne: 'down' } });
+    // Also ensure the filter dropdown only shows companies with active jobs
+    const companies = await jobsCollection.distinct("Company", { Status: 'active', thumbStatus: { $ne: 'down' } });
 
     return { jobs, totalJobs, companies };
+}
+
+
+export async function getJobsForReview(page = 1, limit = 50) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const skip = (page - 1) * limit;
+
+    // Filter: Only Pending Review jobs
+    const query = { Status: 'pending_review' };
+
+    const totalJobs = await jobsCollection.countDocuments(query);
+    const jobs = await jobsCollection.find(query)
+        .sort({ ConfidenceScore: -1, scrapedAt: -1 }) // Show high confidence first
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+    return { 
+        jobs, 
+        totalJobs, 
+        totalPages: Math.ceil(totalJobs / limit), 
+        currentPage: page 
+    };
+}
+
+export async function reviewJobDecision(jobId, decision) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    
+    let newStatus = 'pending_review';
+    if (decision === 'accept') newStatus = 'active';
+    if (decision === 'reject') newStatus = 'rejected';
+
+    await jobsCollection.updateOne(
+        { _id: new ObjectId(jobId) },
+        { 
+            $set: { 
+                Status: newStatus,
+                reviewedAt: new Date()
+            } 
+        }
+    );
+    return { success: true, status: newStatus };
 }
 
 // 2. Get Rejected Jobs
@@ -258,49 +305,39 @@ export async function updateJobFeedback(jobId, status) {
 
 export async function getCompanyDirectoryStats() {
     try {
-        console.log("Stats: Connecting to DB...");
         const db = await connectToDb();
         const jobsCollection = db.collection('jobs');
 
-        // Check if we have ANY jobs first
+        // Check total documents first
         const count = await jobsCollection.countDocuments();
-        console.log(`Stats: Total jobs in DB: ${count}`);
-
         if (count === 0) return [];
 
         const pipeline = [
-            // 1. Filter out rejected jobs
-            { $match: { thumbStatus: { $ne: 'down' } } },
+            // 🚨 CRITICAL FIX: This line ensures we ONLY count jobs you have approved.
+            // If a job is 'pending_review', it will be ignored here.
+            { $match: { Status: 'active', thumbStatus: { $ne: 'down' } } },
             
-            // 2. Group by Company
             {
                 $group: {
                     _id: "$Company",
                     openRoles: { $sum: 1 },
                     locations: { $addToSet: "$Location" },
-                    // Get sample URL for domain guessing
                     sampleUrl: { $first: "$ApplicationURL" } 
                 }
             },
-            
-            // 3. Sort by most open roles
             { $sort: { openRoles: -1 } }
         ];
 
         const stats = await jobsCollection.aggregate(pipeline).toArray();
-        console.log(`Stats: Found ${stats.length} companies.`);
 
         return stats.map(stat => {
-            // Handle missing or null company names
             const companyName = stat._id || "Unknown Company";
-            
-            // Handle locations safely
             const validLocations = (stat.locations || []).filter(l => typeof l === 'string');
             const distinctCities = [...new Set(
                 validLocations.map(loc => loc.split(',')[0].trim())
-            )].slice(0, 3); // Top 3 cities
+            )].slice(0, 3);
 
-            // Create a safe domain string (remove spaces/special chars)
+            // Simple domain guess for logo (can be improved later)
             const cleanName = companyName.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
             return {
@@ -313,6 +350,6 @@ export async function getCompanyDirectoryStats() {
 
     } catch (error) {
         console.error("Stats: Aggregation failed:", error);
-        return []; // Return empty array on error so frontend doesn't crash
+        return [];
     }
 }

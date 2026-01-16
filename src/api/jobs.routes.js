@@ -6,7 +6,9 @@ import {
     getPublicBaitJobs,
     updateJobFeedback, // Import this
     getRejectedJobs ,   // Import this
-    getCompanyDirectoryStats
+    getCompanyDirectoryStats,
+    getJobsForReview,  // Import this
+    reviewJobDecision
 } from '../Db/databaseManager.js'; 
 import { ObjectId } from 'mongodb';
 
@@ -18,8 +20,7 @@ jobsApiRouter.get('/public-bait', async (req, res) => {
         const jobs = await getPublicBaitJobs();
         res.status(200).json(jobs);
     } catch (error) {
-        console.error('[API] Error fetching bait jobs:', error.message);
-        res.status(500).json({ error: "Failed to load latest jobs" });
+        res.status(500).json({ error: "Failed to load bait jobs" });
     }
 });
 
@@ -41,24 +42,47 @@ jobsApiRouter.get('/', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
-        const company = req.query.company || null; // Capture company param
-
-        const { jobs, totalJobs, companies } = await getJobsPaginated(page, limit, company);
-            
-        res.status(200).json({
-            jobs,
-            totalJobs,
-            companies, // Send this to frontend
-            totalPages: Math.ceil(totalJobs / limit),
-            currentPage: page
-        });
+        const company = req.query.company || null;
+        const data = await getJobsPaginated(page, limit, company);
+        res.status(200).json(data);
     } catch (error) {
-        console.error('[API] Error fetching jobs:', error.message);
         res.status(500).json({ error: "Failed to fetch jobs" });
     }
 });
 
-// ✅ PATCH /api/jobs/:id/feedback (Thumbs Up/Down)
+
+
+jobsApiRouter.patch('/admin/decision/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { decision } = req.body; // 'accept' or 'reject'
+
+        if (!['accept', 'reject'].includes(decision)) {
+            return res.status(400).json({ error: "Invalid decision" });
+        }
+
+        await reviewJobDecision(id, decision);
+        res.status(200).json({ message: `Job ${decision}ed successfully` });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
+jobsApiRouter.get('/admin/review', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const data = await getJobsForReview(page, limit);
+        res.status(200).json(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to load review queue" });
+    }
+});
+
+
 jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     try {
         const { id } = req.params;
@@ -111,7 +135,6 @@ jobsApiRouter.get('/directory', async (req, res) => {
         const directory = await getCompanyDirectoryStats();
         res.status(200).json(directory);
     } catch (error) {
-        console.error('[API] Error fetching directory:', error.message);
-        res.status(500).json({ error: "Failed to load company directory" });
+        res.status(500).json({ error: "Failed to load directory" });
     }
 });

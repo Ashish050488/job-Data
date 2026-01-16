@@ -3,6 +3,10 @@
  * to create and validate job documents.
  */
 
+/**
+ * This file defines the schema for a 'Job'
+ */
+
 const jobSchemaDefinition = {
     JobID: { type: String, required: true },
     sourceSite: { type: String, required: true },
@@ -12,23 +16,25 @@ const jobSchemaDefinition = {
     Location: { type: String, default: "N/A" },
     Company: { type: String, default: "N/A" },
     
-    // --- NEW CLASSIFICATION FIELDS ---
-    GermanRequired: { type: Boolean, default: false }, // AI Decision
-    Domain: { type: String, default: "Unclear" },      // Technical / Non-Technical
-    SubDomain: { type: String, default: "Other" },     // Backend, Product, etc.
-    ConfidenceScore: { type: Number, default: 0 },     // 0.0 to 1.0
-    Status: { type: String, default: "review" },       // approved, review, rejected
-    RejectionReason: { type: String, default: null },
-    // ----------------------------------
+    // --- CLASSIFICATION FIELDS ---
+    GermanRequired: { type: Boolean, default: false },
+    Domain: { type: String, default: "Unclear" },
+    SubDomain: { type: String, default: "Other" },
+    ConfidenceScore: { type: Number, default: 0 },
+    
+    // --- WORKFLOW STATUS ---
+    // 'pending_review' = Waiting for human check
+    // 'active'         = Live on website
+    // 'rejected'       = Hidden (but ID kept for deduplication)
+    Status: { type: String, default: "pending_review" }, 
 
     Department: { type: String, default: "N/A" },
     ContractType: { type: String, default: "N/A" },
     ExperienceLevel: { type: String, default: "N/A" },
-    Compensation: { type: String, default: "N/A" },
     PostedDate: { type: Date, default: null },
     createdAt: { type: Date },
     updatedAt: { type: Date },
-    isManual: { type: Boolean, default: false },
+    scrapedAt: { type: Date },
     thumbStatus: { type: String, default: null } 
 };
 
@@ -39,26 +45,22 @@ class Job {
         this.scrapedAt = new Date();
 
         for (const key in jobSchemaDefinition) {
-            if (key === 'createdAt' || key === 'updatedAt') continue;
+            if (key === 'createdAt' || key === 'updatedAt' || key === 'scrapedAt') continue;
 
             const schemaField = jobSchemaDefinition[key];
             let value = data[key];
 
-            // Provide defaults
             if (value === undefined || value === null) {
                 this[key] = schemaField.default;
             } else {
-                // Simple type conversion
                 if (schemaField.type === String) {
                     this[key] = schemaField.trim ? String(value).trim() : String(value);
                 } else if (schemaField.type === Number) {
-                    const numValue = Number(value);
-                    this[key] = isNaN(numValue) ? schemaField.default : numValue;
+                    this[key] = Number(value) || schemaField.default;
                 } else if (schemaField.type === Boolean) {
                     this[key] = Boolean(value);
                 } else if (schemaField.type === Date) {
-                    const dateObj = new Date(value);
-                    this[key] = (value && !isNaN(dateObj.getTime())) ? dateObj : null;
+                    this[key] = new Date(value);
                 } else {
                     this[key] = value;
                 }
@@ -71,7 +73,6 @@ export const createJobModel = (mappedJob, siteName) => {
     return new Job({
         ...mappedJob,
         sourceSite: siteName,
-        isManual: mappedJob.isManual || false, 
         Company: mappedJob.Company || siteName,
     });
 }
