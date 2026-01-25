@@ -1,9 +1,8 @@
 import { createJobModel } from '../models/jobModel.js';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
-import { ObjectId } from 'mongodb';
 
 export const client = new MongoClient(MONGO_URI);
 let db;
@@ -42,12 +41,12 @@ export async function saveJobs(jobs) {
             updateOne: {
                 filter: { JobID: job.JobID, sourceSite: job.sourceSite },
                 update: {
-                    $set: { 
-                        ...pureJobData, 
+                    $set: {
+                        ...pureJobData,
                         updatedAt: new Date(),
-                        scrapedAt: new Date() 
-                    }, 
-                    $setOnInsert: { createdAt: new Date() } 
+                        scrapedAt: new Date()
+                    },
+                    $setOnInsert: { createdAt: new Date() }
                 },
                 upsert: true,
             },
@@ -134,7 +133,8 @@ export async function addCuratedJob(jobData) {
         PostedDate: jobData.PostedDate || new Date().toISOString(),
         ContractType: jobData.ContractType,
         ExperienceLevel: jobData.ExperienceLevel,
-        isManual: true
+        isManual: true,
+        Status: 'active'
     }, "Curated");
 
     await saveJobs([jobToSave]);
@@ -162,16 +162,17 @@ export async function getAllJobs(page = 1, limit = 50) {
 export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-    const jobs = await jobsCollection.find({ 
-        GermanRequired: false 
+    const jobs = await jobsCollection.find({
+        GermanRequired: false,
+        Status: 'active'
     })
-    .sort({ PostedDate: -1, createdAt: -1 })
-    .limit(9)
-    .project({ 
-        JobTitle: 1, Company: 1, Location: 1, Department: 1, 
-        PostedDate: 1, ApplicationURL: 1, GermanRequired: 1 
-    })
-    .toArray();
+        .sort({ PostedDate: -1, createdAt: -1 })
+        .limit(9)
+        .project({
+            JobTitle: 1, Company: 1, Location: 1, Department: 1,
+            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1
+        })
+        .toArray();
     return jobs;
 }
 
@@ -180,15 +181,15 @@ export async function addSubscriber(data) {
     const usersCollection = db.collection('users');
     const newUser = createUserModel({
         email: data.email,
-        desiredDomains: data.categories, 
+        desiredDomains: data.categories,
         emailFrequency: data.frequency,
-        name: data.email.split('@')[0], 
+        name: data.email.split('@')[0],
         createdAt: new Date()
     });
     await usersCollection.updateOne(
         { email: newUser.email },
-        { 
-            $set: { 
+        {
+            $set: {
                 desiredDomains: newUser.desiredDomains,
                 emailFrequency: newUser.emailFrequency,
                 isSubscribed: true,
@@ -208,20 +209,19 @@ export async function addSubscriber(data) {
 // --- NEW / UPDATED FUNCTIONS ---
 
 // 1. Updated Pagination with Filters and Company List
-// Ensure your getJobsPaginated looks like this:
 export async function getJobsPaginated(page = 1, limit = 50, companyFilter = null) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // 🚨 CRITICAL FIX: Ensure 'Status' is 'active' here too
-    const query = { 
-        Status: 'active', 
-        thumbStatus: { $ne: 'down' } 
+    // Filter: Only Active jobs
+    const query = {
+        Status: 'active',
+        thumbStatus: { $ne: 'down' }
     };
 
     if (companyFilter) {
-        query.Company = { $regex: companyFilter, $options: 'i' }; 
+        query.Company = { $regex: companyFilter, $options: 'i' };
     }
 
     const totalJobs = await jobsCollection.countDocuments(query);
@@ -230,14 +230,25 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
         .skip(skip)
         .limit(limit)
         .toArray();
-    
-    // Also ensure the filter dropdown only shows companies with active jobs
+
+    // Get unique companies (only for valid jobs)
     const companies = await jobsCollection.distinct("Company", { Status: 'active', thumbStatus: { $ne: 'down' } });
 
     return { jobs, totalJobs, companies };
 }
 
+// 2. Get Rejected Jobs
+export async function getRejectedJobs() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    return await jobsCollection.find({ 
+        $or: [{ Status: 'rejected' }, { thumbStatus: 'down' }] 
+    })
+        .sort({ updatedAt: -1 })
+        .toArray();
+}
 
+// 3. Admin: Get Jobs for Review
 export async function getJobsForReview(page = 1, limit = 50) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -253,48 +264,39 @@ export async function getJobsForReview(page = 1, limit = 50) {
         .limit(limit)
         .toArray();
 
-    return { 
-        jobs, 
-        totalJobs, 
-        totalPages: Math.ceil(totalJobs / limit), 
-        currentPage: page 
+    return {
+        jobs,
+        totalJobs,
+        totalPages: Math.ceil(totalJobs / limit),
+        currentPage: page
     };
 }
 
+// 4. Admin: Review Decision
 export async function reviewJobDecision(jobId, decision) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-    
+
     let newStatus = 'pending_review';
     if (decision === 'accept') newStatus = 'active';
     if (decision === 'reject') newStatus = 'rejected';
 
     await jobsCollection.updateOne(
         { _id: new ObjectId(jobId) },
-        { 
-            $set: { 
+        {
+            $set: {
                 Status: newStatus,
                 reviewedAt: new Date()
-            } 
+            }
         }
     );
     return { success: true, status: newStatus };
 }
 
-// 2. Get Rejected Jobs
-export async function getRejectedJobs() {
-    const db = await connectToDb();
-    const jobsCollection = db.collection('jobs');
-    return await jobsCollection.find({ thumbStatus: 'down' })
-        .sort({ updatedAt: -1 })
-        .toArray();
-}
-
-// 3. Update Job Feedback
+// 5. Update Job Feedback (Thumbs Up/Down)
 export async function updateJobFeedback(jobId, status) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-    const { ObjectId } = await import('mongodb'); 
 
     await jobsCollection.updateOne(
         { _id: new ObjectId(jobId) },
@@ -302,54 +304,98 @@ export async function updateJobFeedback(jobId, status) {
     );
 }
 
-
+// 6. Directory Stats (Merged: Scraped + Manual)
 export async function getCompanyDirectoryStats() {
     try {
         const db = await connectToDb();
+
+        // 1. Get Scraped Stats (From 'jobs' collection)
         const jobsCollection = db.collection('jobs');
-
-        // Check total documents first
-        const count = await jobsCollection.countDocuments();
-        if (count === 0) return [];
-
         const pipeline = [
-            // 🚨 CRITICAL FIX: This line ensures we ONLY count jobs you have approved.
-            // If a job is 'pending_review', it will be ignored here.
             { $match: { Status: 'active', thumbStatus: { $ne: 'down' } } },
-            
             {
                 $group: {
                     _id: "$Company",
                     openRoles: { $sum: 1 },
                     locations: { $addToSet: "$Location" },
-                    sampleUrl: { $first: "$ApplicationURL" } 
+                    sampleUrl: { $first: "$ApplicationURL" }
                 }
             },
             { $sort: { openRoles: -1 } }
         ];
+        const scrapedStats = await jobsCollection.aggregate(pipeline).toArray();
 
-        const stats = await jobsCollection.aggregate(pipeline).toArray();
+        // Format Scraped Data
+        const formattedScraped = scrapedStats.map(stat => ({
+            _id: stat._id, 
+            companyName: stat._id || "Unknown",
+            openRoles: stat.openRoles,
+            cities: [...new Set((stat.locations || []).map(l => l.split(',')[0].trim()))].slice(0, 2),
+            domain: stat._id.toLowerCase().replace(/[^a-z0-9-]/g, '') + ".com",
+            source: 'scraped'
+        }));
 
-        return stats.map(stat => {
-            const companyName = stat._id || "Unknown Company";
-            const validLocations = (stat.locations || []).filter(l => typeof l === 'string');
-            const distinctCities = [...new Set(
-                validLocations.map(loc => loc.split(',')[0].trim())
-            )].slice(0, 3);
+        // 2. Get Manual Companies (From 'manual_companies' collection)
+        const manualCollection = db.collection('manual_companies');
+        const manualCompanies = await manualCollection.find({}).toArray();
 
-            // Simple domain guess for logo (can be improved later)
-            const cleanName = companyName.toLowerCase().replace(/[^a-z0-9-]/g, '');
+        // Format Manual Data
+        const formattedManual = manualCompanies.map(c => ({
+            _id: c._id.toString(),
+            companyName: c.name,
+            openRoles: 0, 
+            cities: c.cities ? c.cities.split(',').map(s => s.trim()) : [],
+            domain: c.domain,
+            source: 'manual'
+        }));
 
-            return {
-                companyName: companyName,
-                openRoles: stat.openRoles,
-                cities: distinctCities,
-                domain: cleanName + ".com"
-            };
-        });
+        // 3. Merge (Avoid duplicates - prefer scraped if both exist)
+        const scrapedNames = new Set(formattedScraped.map(c => c.companyName.toLowerCase()));
+        const uniqueManual = formattedManual.filter(c => !scrapedNames.has(c.companyName.toLowerCase()));
+
+        return [...formattedScraped, ...uniqueManual];
 
     } catch (error) {
         console.error("Stats: Aggregation failed:", error);
         return [];
     }
+}
+
+// 7. Helper: Find Job By ID (For Re-Analyze)
+export async function findJobById(id) {
+    const db = await connectToDb();
+    return await db.collection('jobs').findOne({ _id: new ObjectId(id) });
+}
+
+// 8. Helper: Delete Jobs By Company Name (For Admin Delete)
+export async function deleteJobsByCompany(companyName) {
+    const db = await connectToDb();
+    console.log(`[Admin] Deleting all jobs for company: ${companyName}`);
+    return await db.collection('jobs').deleteMany({
+        Company: { $regex: new RegExp(`^${companyName}$`, 'i') }
+    });
+}
+
+// 9. Helper: Add Manual Company
+export async function addManualCompany(data) {
+    const db = await connectToDb();
+    const companiesCollection = db.collection('manual_companies');
+
+    // Check for duplicates
+    const exists = await companiesCollection.findOne({
+        name: { $regex: new RegExp(`^${data.name}$`, 'i') }
+    });
+    if (exists) throw new Error("Company already exists in manual list.");
+
+    await companiesCollection.insertOne({
+        ...data,
+        createdAt: new Date()
+    });
+}
+
+// 10. Helper: Delete Manual Company
+export async function deleteManualCompany(id) {
+    const db = await connectToDb();
+    const companiesCollection = db.collection('manual_companies');
+    await companiesCollection.deleteOne({ _id: new ObjectId(id) });
 }

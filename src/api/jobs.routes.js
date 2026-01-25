@@ -1,20 +1,32 @@
 import { Router } from 'express';
-import { 
-    getJobsPaginated, 
-    addCuratedJob, 
-    deleteJobById, 
-    getPublicBaitJobs,
-    updateJobFeedback, // Import this
-    getRejectedJobs ,   // Import this
-    getCompanyDirectoryStats,
-    getJobsForReview,  // Import this
-    reviewJobDecision
-} from '../Db/databaseManager.js'; 
 import { ObjectId } from 'mongodb';
+import {
+    getJobsPaginated,
+    addCuratedJob,
+    deleteJobById,
+    getPublicBaitJobs,
+    updateJobFeedback,
+    getRejectedJobs,
+    getCompanyDirectoryStats,
+    getJobsForReview,
+    reviewJobDecision,
+    findJobById,
+    deleteJobsByCompany,
+    addManualCompany,
+    deleteManualCompany
+} from '../Db/databaseManager.js';
+
+// ✅ CRITICAL FIX: Ensure this path is correct. 
+// Move your grokAnalyzer.js file to 'src/core/grokAnalyzer.js' if it fails.
+import { analyzeJobWithGroq } from '../grokAnalyzer.js';
 
 export const jobsApiRouter = Router();
 
-// ✅ FIX 1: This MUST be the first route defined
+// ---------------------------------------------------------
+// PUBLIC ROUTES
+// ---------------------------------------------------------
+
+// 1. Public Bait
 jobsApiRouter.get('/public-bait', async (req, res) => {
     try {
         const jobs = await getPublicBaitJobs();
@@ -24,20 +36,7 @@ jobsApiRouter.get('/public-bait', async (req, res) => {
     }
 });
 
-// ✅ GET /api/jobs/rejected (Protected route for dismissed jobs)
-jobsApiRouter.get('/rejected', async (req, res) => {
-    try {
-        const jobs = await getRejectedJobs();
-        res.status(200).json(jobs);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * GET /api/jobs
- * Fetches all jobs from the database with pagination and optional company filter.
- */
+// 2. Main Feed
 jobsApiRouter.get('/', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -50,26 +49,21 @@ jobsApiRouter.get('/', async (req, res) => {
     }
 });
 
-
-
-jobsApiRouter.patch('/admin/decision/:id', async (req, res) => {
+// 3. Directory
+jobsApiRouter.get('/directory', async (req, res) => {
     try {
-        const { id } = req.params;
-        const { decision } = req.body; // 'accept' or 'reject'
-
-        if (!['accept', 'reject'].includes(decision)) {
-            return res.status(400).json({ error: "Invalid decision" });
-        }
-
-        await reviewJobDecision(id, decision);
-        res.status(200).json({ message: `Job ${decision}ed successfully` });
+        const directory = await getCompanyDirectoryStats();
+        res.status(200).json(directory);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to load directory" });
     }
 });
 
+// ---------------------------------------------------------
+// ADMIN ROUTES
+// ---------------------------------------------------------
 
-
+// 4. Review Queue
 jobsApiRouter.get('/admin/review', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -77,16 +71,38 @@ jobsApiRouter.get('/admin/review', async (req, res) => {
         const data = await getJobsForReview(page, limit);
         res.status(200).json(data);
     } catch (error) {
-        console.error(error);
         res.status(500).json({ error: "Failed to load review queue" });
     }
 });
 
+// 5. Make Decision (Accept/Reject)
+jobsApiRouter.patch('/admin/decision/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { decision } = req.body;
+        if (!['accept', 'reject'].includes(decision)) return res.status(400).json({ error: "Invalid decision" });
+        await reviewJobDecision(id, decision);
+        res.status(200).json({ message: `Job ${decision}ed successfully` });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
+// 6. Rejected Jobs List
+jobsApiRouter.get('/rejected', async (req, res) => {
+    try {
+        const jobs = await getRejectedJobs();
+        res.status(200).json(jobs);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 7. Update Job Feedback
 jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status } = req.body; // 'up' or 'down' or null
+        const { status } = req.body;
         await updateJobFeedback(id, status);
         res.status(200).json({ message: 'Feedback updated' });
     } catch (error) {
@@ -94,47 +110,107 @@ jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     }
 });
 
-/**
- * POST /api/jobs
- * Manually adds a new "Curated" job.
- */
+// 8. Re-Analyze Job (AI)
+jobsApiRouter.post('/:id/analyze', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const job = await findJobById(id);
+        if (!job) return res.status(404).json({ error: "Job not found" });
+
+        const aiResult = await analyzeJobWithGroq(job.JobTitle, job.Description, job.Location);
+        if (!aiResult) return res.status(500).json({ error: "AI Analysis failed" });
+
+        let newStatus = "pending_review";
+        let rejectionReason = null;
+
+        if (aiResult.german_required === true) {
+            newStatus = "rejected";
+            rejectionReason = "German Language Required";
+        } else if (aiResult.location_classification === "Not Germany") {
+            newStatus = "rejected";
+            rejectionReason = "Location not Germany";
+        }
+
+        const { connectToDb } = await import('../Db/databaseManager.js');
+        const db = await connectToDb();
+        
+        await db.collection('jobs').updateOne(
+            { _id: new ObjectId(id) },
+            { 
+                $set: { 
+                    GermanRequired: aiResult.german_required,
+                    Domain: aiResult.domain,
+                    SubDomain: aiResult.sub_domain,
+                    ConfidenceScore: aiResult.confidence,
+                    Status: newStatus,
+                    RejectionReason: rejectionReason,
+                    updatedAt: new Date()
+                } 
+            }
+        );
+
+        res.status(200).json({ message: "Job re-analyzed", newStatus, german: aiResult.german_required });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 9. Add Manual Company
+jobsApiRouter.post('/companies', async (req, res) => {
+    try {
+        const { name, domain, cities } = req.body;
+        if (!name) return res.status(400).json({ error: "Company Name is required" });
+        await addManualCompany({ name, domain, cities });
+        res.status(201).json({ message: "Company added." });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 10. Delete Company (Handles both Scraped and Manual)
+jobsApiRouter.delete('/company', async (req, res) => {
+    try {
+        const { name } = req.query; // ?name=Zalando
+        if (name) {
+            const result = await deleteJobsByCompany(name);
+            return res.status(200).json({ message: `Deleted ${result.deletedCount} jobs for ${name}.` });
+        }
+        res.status(400).json({ error: "Name required" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+jobsApiRouter.delete('/companies/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await deleteManualCompany(id);
+        res.status(200).json({ message: "Manual company deleted." });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 11. Add Manual Job
 jobsApiRouter.post('/', async (req, res) => {
     try {
         const jobData = req.body;
         const newJob = await addCuratedJob(jobData); 
         res.status(201).json(newJob);
     } catch (error) {
-        console.error('[API] Error saving job:', error.message);
-        if (error.message.includes('duplicate URL')) {
-            return res.status(409).json({ error: error.message });
-        }
+        if (error.message.includes('duplicate URL')) return res.status(409).json({ error: error.message });
         res.status(500).json({ error: error.message });
     }
 });
 
-/**
- * DELETE /api/jobs/:id
- */
+// 12. Delete Job ID
 jobsApiRouter.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        if (!ObjectId.isValid(id)) {
-            return res.status(400).json({ error: 'Invalid Job ID format.' });
-        }
+        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
         await deleteJobById(new ObjectId(id));
-        res.status(200).json({ message: 'Job deleted successfully.' });
+        res.status(200).json({ message: 'Job deleted.' });
     } catch (error) {
-        console.error(`[API] Error deleting job:`, error.message);
         res.status(500).json({ error: error.message });
-    }
-});
-
-
-jobsApiRouter.get('/directory', async (req, res) => {
-    try {
-        const directory = await getCompanyDirectoryStats();
-        res.status(200).json(directory);
-    } catch (error) {
-        res.status(500).json({ error: "Failed to load directory" });
     }
 });
