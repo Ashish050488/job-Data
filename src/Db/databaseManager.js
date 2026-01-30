@@ -3,6 +3,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
+import bcrypt from 'bcryptjs';
 
 export const client = new MongoClient(MONGO_URI);
 let db;
@@ -398,4 +399,67 @@ export async function deleteManualCompany(id) {
     const db = await connectToDb();
     const companiesCollection = db.collection('manual_companies');
     await companiesCollection.deleteOne({ _id: new ObjectId(id) });
+}
+
+
+
+
+
+export async function registerUser({ email, password, name, role = 'user' }) {
+    const db = await connectToDb();
+    const usersCollection = db.collection('users');
+
+    // Check if user exists
+    const existingUser = await usersCollection.findOne({ email });
+    if (existingUser) {
+        throw new Error("User already exists");
+    }
+
+    // Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const newUser = createUserModel({
+        email,
+        password: hashedPassword,
+        name,
+        role,
+        createdAt: new Date()
+    });
+
+    await usersCollection.insertOne(newUser);
+    return { id: newUser._id, email: newUser.email, role: newUser.role, name: newUser.name };
+}
+
+// 2. Login User
+export async function loginUser(email, password) {
+    const db = await connectToDb();
+    const usersCollection = db.collection('users');
+
+    // Find user
+    const user = await usersCollection.findOne({ email });
+    if (!user) {
+        throw new Error("Invalid credentials");
+    }
+
+    // Check if user has a password (legacy subscribers might not)
+    if (!user.password) {
+        throw new Error("Please register an account first.");
+    }
+
+    // Compare passwords
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+        throw new Error("Invalid credentials");
+    }
+
+    return { id: user._id, email: user.email, role: user.role, name: user.name };
+}
+
+// 3. Get User Profile (Protected)
+export async function getUserProfile(userId) {
+    const db = await connectToDb();
+    const usersCollection = db.collection('users');
+    // Return user without password
+    return await usersCollection.findOne({ _id: new ObjectId(userId) }, { projection: { password: 0 } });
 }

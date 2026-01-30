@@ -8,6 +8,7 @@ import { runValidator } from './tasks/runValidator.js';
 import { runMatcher } from './tasks/runMatcher.js';
 import { jobsApiRouter } from './api/jobs.routes.js';
 import { usersApiRouter } from './api/users.routes.js';
+import { authRouter } from './api/auth.routes.js';
 
 // --- Setup ---
 const app = express();
@@ -18,6 +19,7 @@ app.use(cors()); // Allow your React app (on a different port) to make requests
 app.use(express.json()); // Allow the server to understand JSON request bodies
 
 // --- API Routes ---
+app.use('/api/auth', authRouter);
 app.use('/api/jobs', jobsApiRouter); // All job-related routes are in a separate file
 app.use('/api/users', usersApiRouter);
 
