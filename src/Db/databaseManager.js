@@ -1,5 +1,6 @@
 import { createJobModel } from '../models/jobModel.js';
 import { MongoClient, ObjectId } from 'mongodb';
+import mongoose from 'mongoose'; // ✅ 1. Import Mongoose
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
@@ -10,7 +11,17 @@ let db;
 
 export async function connectToDb() {
     if (db) return db;
+    
+    // 1. Connect Native Client (Existing)
     await client.connect();
+    
+    // ✅ 2. Connect Mongoose (New - Fixes the Analytics Timeout)
+    // We need this because AnalyticsModel uses Mongoose, not the native client.
+    if (mongoose.connection.readyState === 0) {
+        await mongoose.connect(MONGO_URI);
+        console.log("🍃 Mongoose Connected");
+    }
+
     db = client.db("job-scraper");
     console.log("🗄️  Successfully connected to MongoDB.");
     return db;
@@ -400,10 +411,6 @@ export async function deleteManualCompany(id) {
     const companiesCollection = db.collection('manual_companies');
     await companiesCollection.deleteOne({ _id: new ObjectId(id) });
 }
-
-
-
-
 
 export async function registerUser({ email, password, name, role = 'user' }) {
     const db = await connectToDb();

@@ -5,6 +5,7 @@ import { AbortController } from 'abort-controller';
 // ✅ FIX: Import the correct Groq function name
 import { analyzeJobWithGroq } from "../grokAnalyzer.js"; 
 import { createJobModel } from '../models/jobModel.js';
+import { Analytics } from '../models/analyticsModel.js'; // ✅ ADDED: Analytics Model
 import { BANNED_ROLES } from '../utils.js';
 
 /**
@@ -15,6 +16,7 @@ function isSpamOrIrrelevant(title) {
     const lowerTitle = title.toLowerCase();
     return BANNED_ROLES.some(role => lowerTitle.includes(role));
 }
+
 /**
  * Scrapes job details from its webpage.
  */
@@ -47,6 +49,7 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
     return mappedJob;
 }
 
+
 export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders) {
     // 1. Config Pre-Filter
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) return null;
@@ -58,6 +61,10 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     if (!mappedJob.JobID || existingIDs.has(mappedJob.JobID)) {
         return null;
     }
+
+    // ✅ ANALYTICS 1: New Unique Job Data Fetched
+    // We count it here because it passed the duplicate check (it's new data)
+    await Analytics.increment('jobsScraped');
 
     // 3. Title Filter
     if (isSpamOrIrrelevant(mappedJob.JobTitle)) {
@@ -74,10 +81,14 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // 5. Get Description
     if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
         // ... (Keep existing description scraping logic) ...
-        // Placeholder for scraping logic invocation
+        mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
     }
     
     if (!mappedJob.Description) return null;
+
+    // ✅ ANALYTICS 2: Sent to AI
+    // It passed all filters and is about to cost money/tokens
+    await Analytics.increment('jobsSentToAI');
 
     // 6. 🧠 AI CLASSIFICATION
     const aiResult = await analyzeJobWithGroq(mappedJob.JobTitle, mappedJob.Description, mappedJob.Location);
@@ -104,11 +115,17 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
 
     if (status === "rejected") {
         console.log(`❌ [Auto-Rejected] ${mappedJob.JobTitle}: ${rejectionReason}`);
-        // We return NULL here so it doesn't get saved? 
-        // NO. You want to save the ID to save tokens later.
-        // So we create the model but mark it rejected.
+        // We create the model to save the ID (prevent re-scraping)
     } else {
         console.log(`📝 [Pending Review] ${mappedJob.JobTitle} (Conf: ${aiResult.confidence})`);
+    }
+
+    // ✅ ANALYTICS 3: Result Status
+    if (status === 'pending_review') {
+        await Analytics.increment('jobsPendingReview');
+    } else if (status === 'active') {
+        // Future-proofing: If you ever allow auto-publish
+        await Analytics.increment('jobsPublished');
     }
 
     // 8. Create Model
