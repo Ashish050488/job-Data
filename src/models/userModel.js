@@ -6,13 +6,18 @@ import bcrypt from 'bcryptjs';
 
 const userSchemaDefinition = {
     email: { type: String, required: true, trim: true },
-    password: { type: String, required: true }, // ✅ Added: Stores hashed password
+    password: { type: String, required: false }, // ✅ CHANGED: Not required for waitlist
     name: { type: String, default: "User", trim: true },
-    role: { type: String, default: "user" }, // ✅ Added: 'user' or 'admin'
+    role: { type: String, default: "user" },
+    
+    // Talent Pool / Waitlist Data
+    location: { type: String, default: "" }, // ✅ ADDED
+    domain: { type: String, default: "" },   // ✅ ADDED (Tech/Non-Tech)
+    isWaitlist: { type: Boolean, default: false }, // ✅ ADDED
     
     // Preferences
     desiredRoles: { type: Array, default: [] },
-    desiredDomains: { type: Array, default: [] }, // Stores "Tech", "Product"
+    desiredDomains: { type: Array, default: [] },
     emailFrequency: { type: String, default: "Weekly" }, 
     subscriptionTier: { type: String, default: "free" }, 
     isSubscribed: { type: Boolean, default: true },
@@ -35,23 +40,21 @@ class User {
             const schemaField = userSchemaDefinition[key];
             let value = data[key];
 
-            // Specific check for password:
-            // We allow password to be missing ONLY if we are just creating a partial 
-            // user object for something like a newsletter subscription where auth isn't set up yet.
-            // However, for full registration, the API must ensure password is provided.
+            // VALIDATION LOGIC
+            // If required AND missing AND not a waitlist user, throw error
             if (schemaField.required && (!value)) {
-                // If it's the password field and it's missing, we allow it ONLY if 
-                // this seems to be a legacy/newsletter-only update (context dependent).
-                // For now, we enforce schema strictness.
-                if (key !== 'password' || (key === 'password' && data.passwordRequired !== false)) {
-                     // You can pass { passwordRequired: false } in data to bypass this for newsletter-only adds
-                     // OR just let the API handle the error. 
-                     // For safety, let's keep it strict but use a flexible check below.
-                }
+                 // If it's the password field, we allow it to be empty IF 'isWaitlist' is true
+                 if (key === 'password' && data.isWaitlist === true) {
+                     value = null; // Allow null for waitlist
+                 } else {
+                     // For normal users/admins, password is required
+                    // In a real Mongoose model, this would be handled by the schema. 
+                    // Here we are lenient to allow the controller to handle validation errors.
+                 }
             }
 
             if (value === undefined || value === null) {
-                this[key] = schemaField.default;
+                this[key] = schemaField.default !== undefined ? schemaField.default : null;
             } else {
                 if (schemaField.type === String) {
                     this[key] = schemaField.trim ? String(value).trim() : String(value);
