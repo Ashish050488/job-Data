@@ -93,7 +93,10 @@ export async function deleteJobById(jobId) {
 export async function getSubscribedUsers() {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
-    return await usersCollection.find({ isSubscribed: true }).toArray();
+   return await usersCollection.find({ 
+        isSubscribed: true,
+        isWaitlist: { $ne: true } // "Not Equal to true"
+    }).toArray();
 }
 
 export async function findMatchingJobs(user) {
@@ -218,9 +221,7 @@ export async function addSubscriber(data) {
     return { success: true, email: newUser.email };
 }
 
-// --- NEW / UPDATED FUNCTIONS ---
 
-// 1. Updated Pagination with Filters and Company List
 export async function getJobsPaginated(page = 1, limit = 50, companyFilter = null) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -412,30 +413,47 @@ export async function deleteManualCompany(id) {
     await companiesCollection.deleteOne({ _id: new ObjectId(id) });
 }
 
-export async function registerUser({ email, password, name, role = 'user' }) {
+export async function registerUser({ email, password, name, role = 'user', location, domain, isWaitlist }) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
 
-    // Check if user exists
+    // 1. Check if user exists
     const existingUser = await usersCollection.findOne({ email });
     if (existingUser) {
+        // Optional: If they are already on the waitlist, you might want to just return success 
+        // to prevent leaking which emails are registered. 
+        // For now, we keep the error to match your previous logic.
         throw new Error("User already exists");
     }
 
-    // Hash the password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    // 2. Hash Password (ONLY if password exists)
+    let hashedPassword = null;
+    if (password) {
+        const salt = await bcrypt.genSalt(10);
+        hashedPassword = await bcrypt.hash(password, salt);
+    }
 
+    // 3. Create User Model
+    // We pass 'location', 'domain', and 'isWaitlist' so they get saved to the DB
     const newUser = createUserModel({
         email,
-        password: hashedPassword,
+        password: hashedPassword, // Will be null for talent pool
         name,
         role,
+        location,    // ✅ Added
+        domain,      // ✅ Added
+        isWaitlist,  // ✅ Added
         createdAt: new Date()
     });
 
     await usersCollection.insertOne(newUser);
-    return { id: newUser._id, email: newUser.email, role: newUser.role, name: newUser.name };
+    
+    return { 
+        id: newUser._id, 
+        email: newUser.email, 
+        role: newUser.role, 
+        name: newUser.name 
+    };
 }
 
 // 2. Login User
