@@ -68,6 +68,27 @@ export async function saveJobs(jobs) {
     await jobsCollection.bulkWrite(operations);
 }
 
+// ✅ NEW FUNCTION: Save all jobs (accepted + rejected) to test log collection
+export async function saveJobTestLog(jobTestLog) {
+    if (!jobTestLog) return;
+    const db = await connectToDb();
+    const testLogsCollection = db.collection('jobTestLogs');
+
+    const { createdAt, ...pureJobData } = jobTestLog;
+    
+    await testLogsCollection.updateOne(
+        { JobID: jobTestLog.JobID, sourceSite: jobTestLog.sourceSite },
+        {
+            $set: {
+                ...pureJobData,
+                scrapedAt: new Date()
+            },
+            $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+    );
+}
+
 export async function deleteOldJobs(siteName, scrapeStartTime) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -102,14 +123,21 @@ export async function getSubscribedUsers() {
 export async function findMatchingJobs(user) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
+    
+    // ✅ UPDATED FILTER: Only match jobs that meet ALL criteria
     const query = {
-        GermanRequired: false,
+        Status: 'active', // ✅ Only active jobs
+        EnglishSpeaking: true, // ✅ Must be English-speaking
+        GermanRequired: false, // ✅ German must NOT be required
+        LocationClassification: "Germany", // ✅ Must be in Germany
         Department: { $in: user.desiredDomains },
         JobID: { $nin: user.sentJobIds },
     };
+    
     if (user.desiredRoles && user.desiredRoles.length > 0) {
         query.$text = { $search: user.desiredRoles.join(' ') };
     }
+    
     return await jobsCollection.find(query).sort({ scrapedAt: -1 }).limit(3).toArray();
 }
 
@@ -143,7 +171,9 @@ export async function addCuratedJob(jobData) {
         Company: jobData.Company,
         Location: jobData.Location,
         Department: jobData.Department,
-        GermanRequired: jobData.GermanRequired,
+        EnglishSpeaking: jobData.EnglishSpeaking ?? true, // ✅ Default to true for manual jobs
+        GermanRequired: jobData.GermanRequired ?? false, // ✅ Default to false for manual jobs
+        LocationClassification: "Germany", // ✅ Manual jobs are assumed to be in Germany
         Description: jobData.Description || `Manually curated: ${jobData.JobTitle}`,
         PostedDate: jobData.PostedDate || new Date().toISOString(),
         ContractType: jobData.ContractType,
@@ -177,15 +207,20 @@ export async function getAllJobs(page = 1, limit = 50) {
 export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
+    
+    // ✅ UPDATED FILTER: Only show jobs that meet ALL criteria
     const jobs = await jobsCollection.find({
-        GermanRequired: false,
-        Status: 'active'
+        Status: 'active',
+        EnglishSpeaking: true, // ✅ Must be English-speaking
+        GermanRequired: false, // ✅ German must NOT be required
+        LocationClassification: "Germany" // ✅ Must be in Germany
     })
         .sort({ PostedDate: -1, createdAt: -1 })
         .limit(9)
         .project({
             JobTitle: 1, Company: 1, Location: 1, Department: 1,
-            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1
+            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1,
+            EnglishSpeaking: 1, LocationClassification: 1 // ✅ Include new fields
         })
         .toArray();
     return jobs;
@@ -227,10 +262,13 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // Filter: Only Active jobs
+    // ✅ UPDATED FILTER: Only show jobs that meet ALL criteria
     const query = {
         Status: 'active',
-        thumbStatus: { $ne: 'down' }
+        thumbStatus: { $ne: 'down' },
+        EnglishSpeaking: true, // ✅ Must be English-speaking
+        GermanRequired: false, // ✅ German must NOT be required
+        LocationClassification: "Germany" // ✅ Must be in Germany
     };
 
     if (companyFilter) {
@@ -244,8 +282,7 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
         .limit(limit)
         .toArray();
 
-    // Get unique companies (only for valid jobs)
-    const companies = await jobsCollection.distinct("Company", { Status: 'active', thumbStatus: { $ne: 'down' } });
+    const companies = await jobsCollection.distinct('Company', { Status: 'active' });
 
     return { jobs, totalJobs, companies };
 }
@@ -322,10 +359,18 @@ export async function getCompanyDirectoryStats() {
     try {
         const db = await connectToDb();
 
-        // 1. Get Scraped Stats (From 'jobs' collection)
+        // ✅ UPDATED: Only count jobs that meet ALL criteria
         const jobsCollection = db.collection('jobs');
         const pipeline = [
-            { $match: { Status: 'active', thumbStatus: { $ne: 'down' } } },
+            { 
+                $match: { 
+                    Status: 'active', 
+                    thumbStatus: { $ne: 'down' },
+                    EnglishSpeaking: true, // ✅ Must be English-speaking
+                    GermanRequired: false, // ✅ German must NOT be required
+                    LocationClassification: "Germany" // ✅ Must be in Germany
+                } 
+            },
             {
                 $group: {
                     _id: "$Company",

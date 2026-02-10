@@ -120,15 +120,19 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
         const aiResult = await analyzeJobWithGroq(job.JobTitle, job.Description, job.Location);
         if (!aiResult) return res.status(500).json({ error: "AI Analysis failed" });
 
+        // ✅ UPDATED LOGIC: Apply the same strict filtering as in processor.js
         let newStatus = "pending_review";
         let rejectionReason = null;
 
-        if (aiResult.german_required === true) {
-            newStatus = "rejected";
-            rejectionReason = "German Language Required";
-        } else if (aiResult.location_classification === "Not Germany") {
+        if (aiResult.location_classification !== "Germany") {
             newStatus = "rejected";
             rejectionReason = "Location not Germany";
+        } else if (aiResult.english_speaking !== true) {
+            newStatus = "rejected";
+            rejectionReason = "Not English-speaking";
+        } else if (aiResult.german_required === true) {
+            newStatus = "rejected";
+            rejectionReason = "German Language Required";
         }
 
         const { connectToDb } = await import('../Db/databaseManager.js');
@@ -138,7 +142,9 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
             { _id: new ObjectId(id) },
             { 
                 $set: { 
+                    EnglishSpeaking: aiResult.english_speaking, // ✅ NEW FIELD
                     GermanRequired: aiResult.german_required,
+                    LocationClassification: aiResult.location_classification, // ✅ NEW FIELD
                     Domain: aiResult.domain,
                     SubDomain: aiResult.sub_domain,
                     ConfidenceScore: aiResult.confidence,
@@ -149,7 +155,13 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
             }
         );
 
-        res.status(200).json({ message: "Job re-analyzed", newStatus, german: aiResult.german_required });
+        res.status(200).json({ 
+            message: "Job re-analyzed", 
+            newStatus, 
+            english: aiResult.english_speaking,
+            german: aiResult.german_required,
+            location: aiResult.location_classification 
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

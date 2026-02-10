@@ -1,13 +1,10 @@
 /**
- * This file defines the schema for a 'Job' and provides a class
- * to create and validate job documents.
+ * Job Test Log Model
+ * Saves ALL jobs (accepted + rejected) for testing and analysis
+ * Includes AI evidence/reasoning for decisions
  */
 
-/**
- * This file defines the schema for a 'Job'
- */
-
-const jobSchemaDefinition = {
+const jobTestLogSchemaDefinition = {
     JobID: { type: String, required: true },
     sourceSite: { type: String, required: true },
     JobTitle: { type: String, required: true, trim: true },
@@ -17,39 +14,47 @@ const jobSchemaDefinition = {
     Company: { type: String, default: "N/A" },
     
     // --- CLASSIFICATION FIELDS ---
-    EnglishSpeaking: { type: Boolean, default: false }, // ✅ NEW: Is this an English-speaking job?
-    GermanRequired: { type: Boolean, default: false },  // Is German mandatory?
-    LocationClassification: { type: String, default: "Unclear" }, // ✅ NEW: "Germany", "Not Germany", "Unclear"
+    EnglishSpeaking: { type: Boolean, default: false },
+    GermanRequired: { type: Boolean, default: false },
+    LocationClassification: { type: String, default: "Unclear" },
     Domain: { type: String, default: "Unclear" },
     SubDomain: { type: String, default: "Other" },
     ConfidenceScore: { type: Number, default: 0 },
     
+    // --- AI EVIDENCE (NEW) ---
+    Evidence: {
+        type: Object,
+        default: {
+            location_reason: "",
+            english_reason: "",
+            german_reason: ""
+        }
+    },
+    
+    // --- FINAL DECISION ---
+    FinalDecision: { type: String, default: "rejected" }, // "accepted" or "rejected"
+    RejectionReason: { type: String, default: null }, // Why it was rejected (if applicable)
+    
     // --- WORKFLOW STATUS ---
-    // 'pending_review' = Waiting for human check
-    // 'active'         = Live on website
-    // 'rejected'       = Hidden (but ID kept for deduplication)
-    Status: { type: String, default: "pending_review" }, 
-
+    Status: { type: String, default: "pending_review" },
+    
     Department: { type: String, default: "N/A" },
     ContractType: { type: String, default: "N/A" },
     ExperienceLevel: { type: String, default: "N/A" },
     PostedDate: { type: Date, default: null },
     createdAt: { type: Date },
-    updatedAt: { type: Date },
-    scrapedAt: { type: Date },
-    thumbStatus: { type: String, default: null } 
+    scrapedAt: { type: Date }
 };
 
-class Job {
+class JobTestLog {
     constructor(data) {
         this.createdAt = data.createdAt ? new Date(data.createdAt) : new Date();
-        this.updatedAt = new Date(); 
         this.scrapedAt = new Date();
 
-        for (const key in jobSchemaDefinition) {
-            if (key === 'createdAt' || key === 'updatedAt' || key === 'scrapedAt') continue;
+        for (const key in jobTestLogSchemaDefinition) {
+            if (key === 'createdAt' || key === 'scrapedAt') continue;
 
-            const schemaField = jobSchemaDefinition[key];
+            const schemaField = jobTestLogSchemaDefinition[key];
             let value = data[key];
 
             if (value === undefined || value === null) {
@@ -60,7 +65,6 @@ class Job {
                 } else if (schemaField.type === Number) {
                     this[key] = Number(value) || schemaField.default;
                 } else if (schemaField.type === Boolean) {
-                    // ✅ FIX: Properly convert string booleans to actual booleans
                     if (typeof value === 'string') {
                         this[key] = value === 'true';
                     } else {
@@ -68,6 +72,8 @@ class Job {
                     }
                 } else if (schemaField.type === Date) {
                     this[key] = new Date(value);
+                } else if (schemaField.type === Object) {
+                    this[key] = value;
                 } else {
                     this[key] = value;
                 }
@@ -76,8 +82,8 @@ class Job {
     }
 }
 
-export const createJobModel = (mappedJob, siteName) => {
-    return new Job({
+export const createJobTestLog = (mappedJob, siteName) => {
+    return new JobTestLog({
         ...mappedJob,
         sourceSite: siteName,
         Company: mappedJob.Company || siteName,

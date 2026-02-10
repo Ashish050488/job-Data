@@ -1,14 +1,21 @@
 import { StripHtml, COMMON_KEYWORDS } from "../utils.js"
-
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
 
 export const tradeRepublicConfig =  {
     siteName: "Trade Republic",
     apiUrl: "https://api.traderepublic.com/api/v1/career/jobs?content=true",
     method: "GET",
-    filterKeywords: [...COMMON_KEYWORDS,], // We can add extra keywords like this
+    filterKeywords: [...COMMON_KEYWORDS],
     getBody: () => null,
     getJobs: (data) => data?.jobs || [],
     getTotal: (data) => data?.jobs?.length || 0,
+    
+    // ✅ USE UNIVERSAL PRE-FILTER
+    // Tell it which field contains the location
+    preFilter: createLocationPreFilter({ 
+        locationFields: ['location.name', 'Location'] 
+    }),
+    
     mapper: (job) => ({
       JobTitle: job.title || "",
       JobID: job.id ? String(job.id) : "",
@@ -20,4 +27,4 @@ export const tradeRepublicConfig =  {
       ContractType: "N/A",
       ExperienceLevel: "N/A"
     })
-  }
+}

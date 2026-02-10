@@ -5,6 +5,8 @@ import { AbortController } from 'abort-controller';
 // ✅ FIX: Import the correct Groq function name
 import { analyzeJobWithGroq } from "../grokAnalyzer.js"; 
 import { createJobModel } from '../models/jobModel.js';
+import { createJobTestLog } from '../models/jobTestLogModel.js'; // ✅ NEW
+import { saveJobTestLog } from '../Db/databaseManager.js'; // ✅ NEW
 import { Analytics } from '../models/analyticsModel.js'; // ✅ ADDED: Analytics Model
 import { BANNED_ROLES } from '../utils.js';
 
@@ -50,7 +52,7 @@ async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
 }
 
 
-export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders) {
+export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders, allRawJobs) {
     // 1. Config Pre-Filter
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) return null;
 
@@ -80,8 +82,29 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     
     // 5. Get Description
     if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
-        // ... (Keep existing description scraping logic) ...
-        mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
+        // ✅ NEW: Check if config has custom getDetails function (for Workday APIs like Covestro)
+        if (typeof siteConfig.getDetails === 'function') {
+            try {
+                const details = await siteConfig.getDetails(rawJob, sessionHeaders);
+                
+                // ✅ Handle skip flag
+                if (details && details.skip) {
+                    console.log(`[${siteConfig.siteName}] Job skipped by getDetails`);
+                    return null;
+                }
+                
+                // ✅ Merge details into mapped job
+                if (details) {
+                    Object.assign(mappedJob, details);
+                }
+            } catch (error) {
+                console.error(`[${siteConfig.siteName}] getDetails error: ${error.message}`);
+                return null;
+            }
+        } else {
+            // ✅ FALLBACK: Use generic HTML scraper
+            mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
+        }
     }
     
     if (!mappedJob.Description) return null;
@@ -98,42 +121,67 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         return null;
     }
 
-    // 7. UPDATED DECISION MATRIX
-    let status = "pending_review"; // Default: Human must check
+    // ✅ 7. STRICT FILTERING LOGIC - RETURN NULL FOR INVALID JOBS
+    // Only save jobs that meet ALL criteria:
+    // - Location must be Germany
+    // - Job must be English-speaking
+    // - German must NOT be required
+    
+    let finalDecision = "accepted";
     let rejectionReason = null;
-
-    if (aiResult.german_required === true) {
-        status = "rejected"; 
-        rejectionReason = "German Language Required";
-    } else if (aiResult.location_classification === "Not Germany") {
-        status = "rejected";
-        rejectionReason = "Location not Germany";
+    
+    if (aiResult.location_classification !== "Germany") {
+        finalDecision = "rejected";
+        rejectionReason = "Location not in Germany";
+        console.log(`❌ [Rejected - Not Germany] ${mappedJob.JobTitle} (Location: ${aiResult.location_classification})`);
+    } else if (aiResult.english_speaking !== true) {
+        finalDecision = "rejected";
+        rejectionReason = "Not English-speaking";
+        console.log(`❌ [Rejected - Not English-speaking] ${mappedJob.JobTitle}`);
+    } else if (aiResult.german_required === true) {
+        finalDecision = "rejected";
+        rejectionReason = "German language required";
+        console.log(`❌ [Rejected - German Required] ${mappedJob.JobTitle}`);
     } else {
-        // Even if high confidence, we send to review queue as per user request
-        status = "pending_review"; 
+        console.log(`✅ [Valid Job] ${mappedJob.JobTitle} (Confidence: ${aiResult.confidence})`);
+    }
+    
+    // ✅ 8. SAVE TO TEST LOG (ALL JOBS - ACCEPTED + REJECTED)
+    const testLogData = {
+        ...mappedJob,
+        EnglishSpeaking: aiResult.english_speaking,
+        GermanRequired: aiResult.german_required,
+        LocationClassification: aiResult.location_classification,
+        Domain: aiResult.domain,
+        SubDomain: aiResult.sub_domain,
+        ConfidenceScore: aiResult.confidence,
+        Evidence: aiResult.evidence, // ✅ NEW: AI reasoning
+        FinalDecision: finalDecision, // ✅ NEW: "accepted" or "rejected"
+        RejectionReason: rejectionReason, // ✅ NEW: Why rejected
+        Status: finalDecision === "accepted" ? "pending_review" : "rejected"
+    };
+    
+    const jobTestLog = createJobTestLog(testLogData, siteConfig.siteName);
+    await saveJobTestLog(jobTestLog);
+    console.log(`📝 [Test Log] Saved ${finalDecision} job: ${mappedJob.JobTitle}`);
+    
+    // ✅ 9. RETURN NULL IF REJECTED (don't save to main jobs collection)
+    if (finalDecision === "rejected") {
+        return null; // ✅ DO NOT SAVE TO MAIN COLLECTION
     }
 
-    if (status === "rejected") {
-        console.log(`❌ [Auto-Rejected] ${mappedJob.JobTitle}: ${rejectionReason}`);
-        // We create the model to save the ID (prevent re-scraping)
-    } else {
-        console.log(`📝 [Pending Review] ${mappedJob.JobTitle} (Conf: ${aiResult.confidence})`);
-    }
+    // If we reach here, job is valid and accepted!
+    // ✅ ANALYTICS 3: Valid job found
+    await Analytics.increment('jobsPendingReview');
 
-    // ✅ ANALYTICS 3: Result Status
-    if (status === 'pending_review') {
-        await Analytics.increment('jobsPendingReview');
-    } else if (status === 'active') {
-        // Future-proofing: If you ever allow auto-publish
-        await Analytics.increment('jobsPublished');
-    }
-
-    // 8. Create Model
+    // 10. Create Model with all AI metadata (for main collection)
+    mappedJob.EnglishSpeaking = aiResult.english_speaking;
     mappedJob.GermanRequired = aiResult.german_required;
+    mappedJob.LocationClassification = aiResult.location_classification;
     mappedJob.Domain = aiResult.domain;
     mappedJob.SubDomain = aiResult.sub_domain;
     mappedJob.ConfidenceScore = aiResult.confidence;
-    mappedJob.Status = status; // 'pending_review' or 'rejected'
+    mappedJob.Status = "pending_review"; // All valid jobs go to review queue
 
     return createJobModel(mappedJob, siteConfig.siteName);
 }
