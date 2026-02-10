@@ -5,7 +5,7 @@ import { AbortController } from 'abort-controller';
 // ✅ FIX: Import the correct Groq function name
 import { analyzeJobWithGroq } from "../grokAnalyzer.js"; 
 import { createJobModel } from '../models/jobModel.js';
-import { createJobTestLog } from '../models/jobTestLogModel.js'; // ✅ NEW
+import { createJobTestLog } from '../models/Jobtestlogmodel.js'; // ✅ NEW
 import { saveJobTestLog } from '../Db/databaseManager.js'; // ✅ NEW
 import { Analytics } from '../models/analyticsModel.js'; // ✅ ADDED: Analytics Model
 import { BANNED_ROLES } from '../utils.js';
