@@ -1,39 +1,34 @@
-import { COMMON_KEYWORDS, StripHtml } from '../utils.js';
+import { StripHtml, COMMON_KEYWORDS } from '../utils.js';
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
 
 export const auto1GroupConfig = {
     siteName: 'AUTO1 Group',
     baseUrl: 'https://www.auto1-group.com/jobs/',
     apiUrl: 'https://www.auto1-group.com/smart-recruiters/jobs/search/',
     method: 'POST',
-    needsDescriptionScraping: true, 
+    needsDescriptionScraping: true,
     descriptionSelector: '[itemprop="description"]',
+    filterKeywords: [...COMMON_KEYWORDS],
+    limit: 15,
 
-    /**
-     * ✅ FINAL FIX: This function now builds the correct request body,
-     * using the nested 'options' object for pagination as you discovered.
-     */
     getBody: (offset, limit, filterKeywords) => {
-        // Convert the scraper's 'offset' to the API's 'currentPage'
-        // The API seems to be 1-based, so page 0 becomes 1, page 20 becomes 2, etc.
         const currentPage = Math.floor(offset / limit) + 1;
-
         return {
             query: filterKeywords.join(' '),
-            filters: {
-                country: "Germany" // Correct filter key
-            },
-            options: {
-                currentPage: currentPage, // Correct pagination parameter
-                resultsPerPage: limit
-            }
+            filters: { country: "Germany" },
+            options: { currentPage, resultsPerPage: limit }
         };
     },
 
     getJobs: (data) => data?.jobs?.hits || [],
     getTotal: (data) => data?.jobs?.total?.value || 0,
-    
-    // The API uses 15 results per page according to your payload
-    limit: 15, 
+
+    // Raw job is wrapped in _source, location is in _source.locationCity / _source.locationCountry
+    preFilter: (rawJob) => {
+        const job = rawJob._source || rawJob;
+        const locationText = `${job.locationCity || ""} ${job.locationCountry || ""}`;
+        return createLocationPreFilter({ locationFields: [] })({ location: locationText });
+    },
 
     mapper: (rawJob) => {
         const job = rawJob._source;
@@ -45,22 +40,19 @@ export const auto1GroupConfig = {
             description += (qualifications?.text || '');
             description += (additionalInformation?.text || '');
         }
-
         return {
-            JobID: rawJob._id,
-            JobTitle: job.title,
+            JobID: rawJob._id || "",
+            JobTitle: job.title || "",
             ApplicationURL: `${auto1GroupConfig.baseUrl}${job.url}`,
-            Location: `${job.locationCity}, ${job.locationCountry}`,
+            Location: `${job.locationCity || ""}, ${job.locationCountry || ""}`.replace(/^, /, ""),
             Company: job.brand || "AUTO1 Group",
             Department: job.department || "N/A",
             ExperienceLevel: job.experienceLevel || "N/A",
             PostedDate: job.createdOn ? job.createdOn.split('T')[0] : "N/A",
-            Description: StripHtml(description), 
+            ExpirationDate: "N/A",
+            Description: StripHtml(description),
             ContractType: "N/A",
             Compensation: "N/A",
-            ExpirationDate: "N/A",
         };
     },
-
-    filterKeywords: COMMON_KEYWORDS,
 };

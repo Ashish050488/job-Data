@@ -1,22 +1,14 @@
 import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
 import { JSDOM } from 'jsdom';
 import fetch from 'node-fetch';
-
 
 export const commerzbankConfig = {
     siteName: "Commerzbank",
     apiUrl: "https://api-jobs.commerzbank.com/search/",
     method: "GET",
-    
-    filterKeywords: [
-        "project manager", "program manager", "product manager", "product owner",
-        "lead", "team lead", "tech lead", "engineering manager",
-        "head of", "director", "chief", "vp", "vice president",
-        "principal", "senior",
-        "leiter", "manager", "direktor", "projektleiter", "teamleiter"
-    ],
-
     needsDescriptionScraping: true,
+    filterKeywords: [...COMMON_KEYWORDS],
 
     buildPageUrl: (offset, limit) => {
         const data = {
@@ -31,47 +23,40 @@ export const commerzbankConfig = {
                     "PositionLocation.CountryName", "PositionLocation.CityName"
                 ]
             },
-            SearchCriteria: [] 
+            SearchCriteria: []
         };
         const encodedData = encodeURIComponent(JSON.stringify(data));
         return `https://api-jobs.commerzbank.com/search/?data=${encodedData}`;
     },
-    
-    getTotal: (data) => data?.SearchResult?.SearchResultCountAll || 0,
 
+    getTotal: (data) => data?.SearchResult?.SearchResultCountAll || 0,
     getJobs: (data) => (data?.SearchResult?.SearchResultItems || []).map(item => item.MatchedObjectDescriptor),
 
-    // ✅ NEW: This filter runs on the raw data from the master list.
-    // It's the most efficient place to check the country.
-    preFilter: (job) => {
-        return job.PositionLocation?.[0]?.CountryName === "Germany";
+    // Raw job has PositionLocation[0].CountryName and CityName
+    preFilter: (rawJob) => {
+        const locationText = (rawJob.PositionLocation || [])
+            .map(loc => `${loc.CityName || ""} ${loc.CountryName || ""}`)
+            .join(' ');
+        return createLocationPreFilter({ locationFields: [] })({ location: locationText });
     },
 
     getDetails: async (job) => {
-        // The country check has been moved to preFilter, making this function cleaner.
         try {
             const res = await fetch(job.PositionURI);
-            if (!res.ok) return { Description: "Could not load description." };
-            
+            if (!res.ok) return { Description: "" };
             const html = await res.text();
-            const descriptionSelector = 'div.panel-body'; 
-            
             const dom = new JSDOM(html);
-            const descriptionElements = dom.window.document.querySelectorAll(descriptionSelector);
-            
-            let description = "Description not found.";
-            if (descriptionElements && descriptionElements.length > 0) {
-                description = Array.from(descriptionElements).map(el => el.textContent).join('\n\n');
-                description = StripHtml(description);
-            }
-
-            return { Description: description };
+            const descriptionElements = dom.window.document.querySelectorAll('div.panel-body');
+            const description = descriptionElements.length > 0
+                ? Array.from(descriptionElements).map(el => el.textContent).join('\n\n')
+                : "";
+            return { Description: StripHtml(description) };
         } catch (error) {
             console.error(`[Commerzbank] Failed to scrape details for job ${job.ID}: ${error.message}`);
-            return { Description: "Error scraping description." };
+            return { Description: "" };
         }
     },
-    
+
     mapper: (job) => ({
         JobTitle: job.PositionTitle || "",
         JobID: String(job.ID || ""),
@@ -80,11 +65,12 @@ export const commerzbankConfig = {
             .join(" | ")
             .replace(/^, /, ""),
         PostingDate: job.PublicationStartDate || "",
+        ExpirationDate: "",
         Department: job.ParentOrganizationName || "N/A",
         Description: StripHtml((job.PositionFormattedDescription || []).map(d => d.Content).join(" ")),
         ApplicationURL: job.PositionURI || "",
         ContractType: "N/A",
-        ExperienceLevel: (job.CareerLevel?.[0]?.Name || "N/A")
+        ExperienceLevel: job.CareerLevel?.[0]?.Name || "N/A",
+        Compensation: "N/A"
     })
 };
-

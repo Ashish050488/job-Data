@@ -1,46 +1,68 @@
-import { StripHtml, COMMON_KEYWORDS } from "../utils.js"
+import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
+import fetch from 'node-fetch';
+import { AbortController } from 'abort-controller';
 
+export const airbusConfig = {
+    siteName: "Airbus",
+    apiUrl: "https://ag.wd3.myworkdayjobs.com/wday/cxs/ag/Airbus/jobs",
+    baseUrl: "https://ag.wd3.myworkdayjobs.com/Airbus",
+    method: "POST",
+    needsSession: true,
+    needsDescriptionScraping: true,
+    filterKeywords: [...COMMON_KEYWORDS],
 
-export const airbusConfig ={
-        siteName: "Airbus",
-        apiUrl: "https://ag.wd3.myworkdayjobs.com/wday/cxs/ag/Airbus/jobs",
-        baseUrl: "https://ag.wd3.myworkdayjobs.com/Airbus",
-        method: "POST",
-        needsSession: true,
-        needsDescriptionScraping: true,
-        filterKeywords: [...COMMON_KEYWORDS],
-        getBody: (offset, limit, keywords) => ({
-            "appliedFacets": { "locationCountry": ["dcc5b7608d8644b3a93716604e78e995"] },
-            "limit": 20,
-            "offset": offset,
-            "searchText": ""
-        }),
-        getJobs: (data) => data?.jobPostings || [],
-        getDetails: async (job, sessionHeaders) => {
+    getBody: (offset, limit) => ({
+        "appliedFacets": { "locationCountry": ["dcc5b7608d8644b3a93716604e78e995"] },
+        "limit": 20,
+        "offset": offset,
+        "searchText": ""
+    }),
+
+    getTotal: (data) => data?.total || 0,
+    getJobs: (data) => data?.jobPostings || [],
+
+    // Workday raw job has 'locationsText' field
+    preFilter: createLocationPreFilter({
+        locationFields: ['locationsText', 'title']
+    }),
+
+    getDetails: async (job, sessionHeaders) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        try {
             const detailsApiUrl = `https://ag.wd3.myworkdayjobs.com/wday/cxs/ag/Airbus${job.externalPath}`;
-            const res = await fetch(detailsApiUrl, { headers: sessionHeaders });
-            if (!res.ok) { return {}; }
+            const res = await fetch(detailsApiUrl, { headers: sessionHeaders, signal: controller.signal });
+            if (!res.ok) { return { skip: true }; }
             const data = await res.json();
             const jobInfo = data?.jobPostingInfo;
             if (jobInfo?.jobRequisitionLocation?.country?.descriptor !== "Germany") { return { skip: true }; }
             return {
                 Description: StripHtml(jobInfo?.jobDescription || ""),
-                Department: jobInfo?.jobRequisitionLocation?.descriptor || "N/A",
                 ContractType: jobInfo?.timeType || "N/A",
-                Location: jobInfo?.location || jobInfo?.jobRequisitionLocation?.descriptor || "N/A"
+                Location: jobInfo?.location || jobInfo?.jobRequisitionLocation?.descriptor || "N/A",
+                PostingDate: jobInfo?.startDate || "",
+                ExpirationDate: jobInfo?.endDate || ""
             };
-        },
-        // ✅ THE FINAL FIX: The complete, correct mapper is now included.
-        mapper: (job) => ({
-            JobTitle: job.title || "",
-            JobID: job.bulletFields?.[0] || "",
-            Location: job.locationsText || "",
-            PostingDate: job.postedOn || "",
-            Department: "",
-            Description: "",
-            ApplicationURL: `https://ag.wd3.myworkdayjobs.com/Airbus${job.externalPath}`,
-            ContractType: "",
-            ExperienceLevel: "N/A",
-            Compensation: "N/A"
-        })
-    }
+        } catch (error) {
+            console.error(`[Airbus] Error getting details for job ${job.bulletFields?.[0]}: ${error.message}`);
+            return { skip: true };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    },
+
+    mapper: (job) => ({
+        JobTitle: job.title || "",
+        JobID: String(job.bulletFields?.[0] || ""),
+        Location: job.locationsText || "",
+        PostingDate: "",
+        ExpirationDate: "",
+        Department: "",
+        Description: "",
+        ApplicationURL: `https://ag.wd3.myworkdayjobs.com/Airbus${job.externalPath}`,
+        ContractType: "",
+        ExperienceLevel: "N/A",
+        Compensation: "N/A"
+    })
+};

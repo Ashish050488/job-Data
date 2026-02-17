@@ -4,159 +4,258 @@ import { sleep } from './utils.js';
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-// Using the most versatile model. 
-// Fallback could be "llama-3.1-8b-instant" if this one is consistently overloaded.
 const MODEL_NAME = "llama-3.1-8b-instant"; 
-
-const MAX_RETRIES = 5; // Increased retries since we are waiting smarter now
+const MAX_RETRIES = 5;
 
 /**
- * Analyzes a job description using Groq (Llama 3) to determine quality.
+ * Analyzes a job description using Groq - EVIDENCE-BASED ONLY
+ * No assumptions, only explicit proof
  */
 export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
     if (!description || description.length < 50) return null;
 
-    // Truncate to save tokens but keep enough context
     const descriptionSnippet = description.substring(0, 4000);
 
-    const prompt = `
-    You are a strict job classification engine. 
-    Analyze the following Job Title and Description snippet.
-    
-    JOB TITLE: "${jobTitle}"
-    LOCATION RAW: "${locationRaw}"
-    DESCRIPTION: "${descriptionSnippet}..."
+  const prompt = `
+You are a strict evidence-only classifier.
+You MUST NOT infer anything that is not explicitly stated in the provided text.
 
-    --- 🧠 CLASSIFICATION RULES (READ CAREFULLY) ---
+JOB TITLE: "${jobTitle}"
+LOCATION RAW: "${locationRaw}"
+DESCRIPTION: "${descriptionSnippet}..."
 
-    1. LOCATION (MOST IMPORTANT - CHECK THIS FIRST):
-       
-       🚨 CRITICAL RULE FOR MULTI-LOCATION JOBS:
-       If LOCATION RAW contains MULTIPLE cities separated by ";", "/", "or", or "and":
-       - Check if AT LEAST ONE is a German city
-       - If YES → classify as "Germany" (candidate can choose to work from German location)
-       - If NO → classify as "Not Germany"
-       - Examples:
-         * "Berlin; Paris" → "Germany" ✅ (Berlin is German)
-         * "Munich/London" → "Germany" ✅ (Munich is German)
-         * "Berlin or Vienna" → "Germany" ✅ (Berlin is German)
-         * "London; Paris" → "Not Germany" ❌ (no German cities)
-       
-       STEP 1: CHECK FOR GERMAN CITIES IN LOCATION RAW
-       German cities include: Berlin, Munich, Hamburg, Frankfurt, Cologne, Stuttgart, Düsseldorf, 
-       Dortmund, Essen, Leipzig, Dresden, Hanover, Nuremberg, Duisburg, Bochum, Wuppertal, 
-       Bielefeld, Bonn, Münster, Karlsruhe, Mannheim, Augsburg, Wiesbaden
-       
-       - If LOCATION RAW contains ANY German city → "Germany" ✅
-       - Even if it also lists non-German cities (Berlin; Paris, Munich/London, etc.)
-       
-       STEP 2: CHECK FOR NON-GERMAN ONLY LOCATIONS
-       - If LOCATION RAW contains ONLY non-German cities → "Not Germany"
-       - Examples: London, Paris, Vienna, Zurich, Amsterdam, Madrid, Rome, Milan, etc.
-       
-       STEP 3: CHECK DESCRIPTION FOR LOCATION RESTRICTIONS
-       - If description says "MUST be based in [Non-German City]" → "Not Germany"
-       - If description says "EXCLUSIVELY [Non-German Country]" → "Not Germany"
-       - If Remote but restricted to non-German country → "Not Germany"
-       
-       STEP 4: REMOTE JOBS
-       - If "Remote" with no country restriction → check description
-       - If "Remote - Germany" or "Remote within Germany" → "Germany"
-       - If "Remote - EU" or "Remote - Europe" → "Germany" (if no other restrictions)
-       
-       OUTPUT:
-       - "Germany": If AT LEAST ONE German city/location option is available
-       - "Not Germany": If NO German location options (all cities are non-German)
-       - "Unclear": If location info is missing or ambiguous
+--- 🚨 ABSOLUTE RULES (CRITICAL) ---
 
-    2. ENGLISH SPEAKING:
-       - TRUE: The job is conducted in English as the primary working language. Indicators include:
-         * "English is the working language"
-         * "English-speaking environment"
-         * "All communication in English"
-         * Description is primarily in English AND does not require German
-         * "International team" with English mentioned
-         * "Fluent English required" or "Native English speaker"
-       
-       - FALSE: The job requires German as the primary working language OR is not clearly English-speaking:
-         * Job description is primarily in German
-         * No mention of English being the working language
-         * Ambiguous language requirements
+1) Do NOT use the language of the description (English/German) as evidence for english_speaking or german_required.
+2) Only mark a field TRUE if there is EXPLICIT proof in the text.
+3) If explicit proof is missing, mark the field FALSE.
+4) Evidence MUST contain EXACT QUOTES from LOCATION RAW or DESCRIPTION.
+   - Use double quotes "" to show the exact text
+   - Do NOT paraphrase or summarize
+   - Do NOT invent quotes
+5) If you cannot find a quote, write: "No explicit statement found in DESCRIPTION."
 
-    3. GERMAN REQUIRED:
-       - TRUE (Mandatory): ONLY if the text explicitly says:
-         * "German is mandatory"
-         * "Fluent German required"
-         * "Must speak German"
-         * "Deutschkenntnisse erforderlich"
-         * "Verhandlungssicher Deutsch"
-         * "C1/C2 German level"
-         * "German is required"
-         * Job description is primarily in German language
-       
-       - FALSE (English Friendly): If the text says:
-         * "German is a plus" / "nice to have" / "beneficial" / "advantage"
-         * "English is the working language"
-         * "No German skills required"
-         * OR if German is NOT mentioned at all.
-       
-       - CRITICAL RULE: If both "English required" AND "German is a plus" appear, then german_required = FALSE.
+--- LOCATION CLASSIFICATION ---
 
-    4. DOMAIN:
-       - "Technical": Software, Data, AI, DevOps, QA, IT Infrastructure.
-       - "Non-Technical": Product, Project Mgmt, Sales, Marketing, HR, Finance, Operations.
-       - "Unclear": If ambiguous.
+Classify as "Germany" if LOCATION RAW contains ANY of:
+- German city names: Berlin, Munich, Hamburg, Frankfurt, Cologne, Stuttgart, Düsseldorf, 
+  Dortmund, Essen, Leipzig, Dresden, Hanover, Nuremberg, Leverkusen, Bomlitz, Dormagen, 
+  Brunsbüttel, Krefeld, Meppen, Aachen, etc.
+- Country indicators: "Germany", "Deutschland", "DE", "German"
+- Remote in Germany: "Remote - Germany", "Remote (Germany)", "Homeoffice Deutschland"
+- State names: "North Rhine-Westphalia", "Lower Saxony", "Bavaria", "Schleswig-Holstein"
 
-    5. SUB-DOMAIN:
-       - Tech: Frontend, Backend, Full Stack, Data, AI, Mobile, DevOps, Security.
-       - Non-Tech: Product, Project, Sales, Marketing, HR, Finance, Legal, Operations.
+Classify as "Not Germany" if LOCATION RAW contains ONLY non-German locations:
+- London, Paris, Vienna, Zurich, Amsterdam, Madrid, etc.
+- AND no German city or "Germany" is mentioned
 
-    6. CONFIDENCE SCORE (0.0 - 1.0):
-       - How certain are you this is an English-speaking job located in Germany?
-       - If location is "Remote" but country is unclear -> Low confidence (0.6).
-       - If "German is a plus" AND "English is working language" -> High confidence (0.9).
+Classify as "Unclear" if:
+- LOCATION RAW is empty, "N/A", or ambiguous like "Remote" without country
 
-    --- OUTPUT FORMAT ---
-    Return ONLY valid JSON. No Markdown. No text.
-    {
-      "location_classification": "Germany" | "Not Germany" | "Unclear",
-      "english_speaking": true | false,
-      "german_required": true | false,
-      "domain": "String",
-      "sub_domain": "String",
-      "confidence": Number,
-      "evidence": {
-        "location_reason": "Brief explanation of why you classified the location this way",
-        "english_reason": "Brief explanation of why you classified english_speaking this way",
-        "german_reason": "Brief explanation of why you classified german_required this way"
-      }
-    }
-    
-    EVIDENCE RULES:
-    - Keep each reason to 2-3 sentences max
-    - QUOTE EXACT TEXT from the job data using quotes ""
-    - Always show WHERE you found the information (LOCATION RAW vs DESCRIPTION)
-    - Be specific and verifiable
-    
-    EXAMPLES:
-    
-    Location Evidence:
-    - Good: "LOCATION RAW field contains: 'Berlin; Paris'. Berlin is a German city, so classified as Germany."
-    - Bad: "Location mentions Berlin which is in Germany"
-    
-    English Evidence:
-    - Good: "Description contains exact phrase: 'English is the working language'. Classified as English-speaking."
-    - Good: "Description is written in English and contains: 'All communication in English'. No German mentioned."
-    - Bad: "Job says English is required"
-    
-    German Evidence:
-    - Good: "Description contains: 'Fluent German required'. Classified as German required."
-    - Good: "Description contains: 'German is a plus but not mandatory'. Classified as German NOT required."
-    - Good: "No mention of German language in LOCATION RAW or DESCRIPTION. Classified as German NOT required."
-    - Bad: "German not mentioned"
-    
-    CRITICAL: Always include EXACT QUOTES in "double quotes" so user can verify by searching the job description.
-    `;
+--- ENGLISH-SPEAKING (english_speaking boolean) ---
+
+Set english_speaking = TRUE if you find EXPLICIT evidence that English is required OR is the working language.
+
+Accepted explicit proofs (find at least ONE of these):
+- "English is the working language"
+- "Working language: English"
+- "Business language is English"  
+- "All communication in English"
+- "Fluent English required"
+- "Proficient English required"
+- "Excellent English skills"
+- "Native English speaker"
+- "You have fluent English skills"
+- "Strong command of English"
+- "English proficiency required"
+- "fluent English skills in speaking and writing"
+- "English (C1)" or any English level mentioned
+- "International team" + "English" mentioned as requirement
+- "English-speaking environment"
+
+Set english_speaking = FALSE if:
+- No explicit English requirement found (even if description is in English)
+- OR German is stated as the working language AND English is not mentioned
+
+
+
+--- GERMAN REQUIRED (german_required boolean) ---
+
+Set german_required = TRUE ONLY if you find EXPLICIT PROOF that German is MANDATORY/REQUIRED.
+
+🚨 ABSOLUTE RULE: Do NOT make assumptions based on phrasing or cultural context.
+ONLY mark TRUE if you see explicit requirement keywords.
+
+EXPLICIT PROOF = Find at least ONE of these REQUIREMENT KEYWORDS:
+
+A) MANDATORY KEYWORDS (in German):
+- "erforderlich" (required) - e.g., "Deutschkenntnisse erforderlich"
+- "notwendig" (necessary) - e.g., "Deutsch notwendig"
+- "vorausgesetzt" (prerequisite) - e.g., "Fließend Deutsch vorausgesetzt"
+- "zwingend" (mandatory) - e.g., "Deutsch zwingend erforderlich"
+- "Pflicht" (mandatory/must) - e.g., "Deutsche Sprache ist Pflicht"
+- "erforderliche" (required) - e.g., "erforderliche Deutschkenntnisse"
+
+B) MANDATORY KEYWORDS (in English):
+- "required" - e.g., "German required", "German skills required"
+- "must" - e.g., "must speak German", "must have German"
+- "mandatory" - e.g., "German is mandatory"
+- "essential" - e.g., "German is essential"
+- "necessary" - e.g., "German is necessary"
+
+C) EXPLICIT LANGUAGE LEVELS (indicates requirement):
+- CEFR levels: "B1", "B2", "C1", "C2"
+- With requirement context: "German (B2)", "Deutsch (C1)", "mindestens B2", "at least C1"
+
+D) BILINGUAL REQUIREMENTS (both needed):
+- "und" between languages: "Deutsch und Englisch"
+- "and" between languages: "English and German" / "German and English"
+- ANY form of both languages listed together:
+  * "Fluent in English and German"
+  * "Fluent in German and English"
+  * "English and German required"
+  * "German and English required"
+  * "both English and German"
+  * "both German and English"
+- Communication in both: "auf Deutsch und Englisch kommunizieren"
+
+🚨 CRITICAL: If you see BOTH "English" and "German" (or "Englisch" and "Deutsch") 
+connected by "and" (or "und"), this means BOTH are required → german_required = TRUE.
+
+🚨 CRITICAL: Do NOT assume German is not required just because the job description is written in English.
+
+E) WORKING LANGUAGE STATEMENTS:
+- "working language" - e.g., "German is the working language", "Deutsch als Arbeitssprache"
+- "business language" - e.g., "German is the business language"
+
+---
+
+Set german_required = FALSE if:
+
+A) OPTIONAL KEYWORDS:
+- "von Vorteil" (advantageous)
+- "wünschenswert" (desirable)
+- "nice to have"
+- "a plus"
+- "beneficial"
+- "von Nutzen" (useful)
+- "hilfreich" (helpful)
+
+B) POLITE PHRASING (NOT explicit requirement):
+- "runden dein Profil ab" (round out your profile) ← NOT explicit!
+- "abrunden" (round out) ← NOT explicit!
+- "ergänzen" (complement) ← NOT explicit!
+
+C) NO MENTION:
+- German is not mentioned anywhere in DESCRIPTION
+
+🚨 CRITICAL EXAMPLES:
+
+MARK TRUE (has explicit requirement keyword):
+✅ "Deutschkenntnisse erforderlich" → TRUE (has "erforderlich")
+✅ "Fließend Deutsch vorausgesetzt" → TRUE (has "vorausgesetzt")
+✅ "German (B2 minimum)" → TRUE (has level = requirement)
+✅ "Deutsch und Englisch" → TRUE (has "und" = both needed)
+✅ "German is mandatory" → TRUE (has "mandatory")
+✅ "Fluent in English and German" → TRUE (has "and" = both needed)
+✅ "English and German required" → TRUE (has "and" + "required")
+
+MARK FALSE (NO explicit requirement keyword):
+❌ "Sehr gute Deutschkenntnisse runden dein Profil ab" → FALSE (only "runden ab", no "erforderlich")
+❌ "Deutschkenntnisse" alone → FALSE (mentions skill but doesn't say required)
+❌ "Gute Deutschkenntnisse" → FALSE (good skills, but not explicitly required)
+❌ "German is a plus" → FALSE (explicitly optional)
+❌ "You have fluent English skills" (no German mentioned) → FALSE
+
+🚨 SPECIAL CASE - Bilingual Requirements:
+"Fluent in English and German (additional languages are a plus)" → TRUE
+Explanation: The "and" connects English and German, meaning BOTH are required. 
+The "(additional languages are a plus)" refers to OTHER languages like Spanish, French, etc., not German.
+
+🚨 DO NOT ASSUME: Just because German is mentioned doesn't mean it's required!
+Only mark TRUE if you see explicit requirement keywords!
+
+--- DOMAIN & SUB-DOMAIN ---
+
+Domain:
+- "Technical": Software, Data, AI, DevOps, Engineering, IT, Automation
+- "Non-Technical": Product, Marketing, Sales, HR, Finance, Operations
+- "Unclear": If ambiguous
+
+Sub-domain: Be specific (e.g., "AI", "Backend", "Data Science", "DevOps", "Product Management", "Marketing")
+
+--- CONFIDENCE SCORE (0.0 - 1.0) ---
+
+High confidence (0.90-0.95):
+- Location is clearly "Germany" with explicit city/country name
+- english_speaking has explicit quote proving English requirement
+- german_required determination has explicit evidence
+
+Medium confidence (0.70-0.85):
+- Location is clear but context-based
+- english_speaking or german_required lacks perfect quote but context is strong
+
+Low confidence (0.50-0.65):
+- Any key field lacks explicit evidence
+- Ambiguous location
+- Unclear language requirements
+
+--- EVIDENCE FORMAT (CRITICAL) ---
+
+For each evidence field, provide:
+1. WHERE you found the information (LOCATION RAW or DESCRIPTION)
+2. EXACT QUOTE in "double quotes"
+3. Brief explanation (1-2 sentences)
+
+Examples:
+
+Good location evidence:
+"LOCATION RAW contains: 'Leverkusen' which is a German city, classified as Germany."
+
+Good english evidence:
+"DESCRIPTION contains exact phrase: 'You have fluent English skills in speaking and writing'. This explicitly requires English proficiency, classified as English-speaking."
+
+Good german evidence (required - has explicit keyword):
+"DESCRIPTION contains: 'Deutschkenntnisse erforderlich'. The word 'erforderlich' means required, classified as German required."
+
+Another example:
+"DESCRIPTION contains: 'Fluent in English and German (additional languages are a plus)'. The word 'and' indicates both languages are required, classified as German required."
+
+Another example:
+"DESCRIPTION contains: 'German (B2 minimum)'. Specifies B2 level which indicates requirement, classified as German required."
+
+Good german evidence (NOT required - no explicit keyword):
+"DESCRIPTION contains: 'Sehr gute Deutsch- und Englischkenntnisse runden dein Profil ab'. While German is mentioned, there is no explicit requirement keyword like 'erforderlich' or 'vorausgesetzt'. Classified as German NOT required."
+
+Another example:
+"No mention of German language in DESCRIPTION. Job only requires: 'fluent English skills'. Classified as German NOT required."
+
+Another example:
+"DESCRIPTION contains: 'German is a plus'. Explicitly states German is optional, classified as German NOT required."
+
+Bad evidence (DO NOT DO THIS):
+"Job requires English based on context" ← No quote!
+"German is working language" ← Not an exact quote!
+
+--- OUTPUT FORMAT ---
+
+Return ONLY valid JSON (no markdown, no backticks):
+{
+  "location_classification": "Germany" | "Not Germany" | "Unclear",
+  "english_speaking": true | false,
+  "german_required": true | false,
+  "domain": "String",
+  "sub_domain": "String",
+  "confidence": Number,
+  "evidence": {
+    "location_reason": "2-3 sentences with EXACT quotes in \\"double quotes\\"",
+    "english_reason": "2-3 sentences with EXACT quotes in \\"double quotes\\"",
+    "german_reason": "2-3 sentences with EXACT quotes in \\"double quotes\\""
+  }
+}
+`;
+
+
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -175,7 +274,7 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
 
             const data = JSON.parse(content);
             
-            // ✅ NORMALIZE TYPES: Ensure booleans are actual booleans, not strings
+            // ✅ NORMALIZE TYPES
             const normalizedData = {
                 location_classification: data.location_classification,
                 english_speaking: data.english_speaking === true || data.english_speaking === "true",
@@ -194,28 +293,23 @@ export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
             return normalizedData;
 
         } catch (err) {
-            // --- SMART RATE LIMIT HANDLING ---
             if (err.status === 429 || err.message.includes('429')) {
-                let waitTime = 60000; // Default fallback: 60s
+                let waitTime = 60000;
 
-                // 1. Try to read 'retry-after' header directly
                 if (err.headers && err.headers['retry-after']) {
                     const retryHeader = parseInt(err.headers['retry-after'], 10);
                     if (!isNaN(retryHeader)) {
-                        waitTime = (retryHeader * 1000) + 1000; // Add 1s buffer
+                        waitTime = (retryHeader * 1000) + 1000;
                     }
-                } 
-                // 2. Try to parse "Please try again in X.XXs" from error message
-                else {
+                } else {
                     const match = err.message.match(/try again in ([\d.]+)s/);
                     if (match && match[1]) {
-                        waitTime = Math.ceil(parseFloat(match[1]) * 1000) + 1000; // Add 1s buffer
+                        waitTime = Math.ceil(parseFloat(match[1]) * 1000) + 1000;
                     }
                 }
 
-                console.warn(`[AI] Groq Rate Limit. Waiting exactly ${waitTime/1000}s...`);
+                console.warn(`[AI] Groq Rate Limit. Waiting ${waitTime/1000}s...`);
                 await sleep(waitTime);
-                // Continue loop to retry immediately after waking up
             } else {
                 console.warn(`[AI] Error: ${err.message}`);
                 if (attempt === MAX_RETRIES) return null;

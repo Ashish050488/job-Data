@@ -1,31 +1,68 @@
-import { StripHtml, COMMON_KEYWORDS } from "../utils.js"
+import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
+import fetch from 'node-fetch';
+import { AbortController } from 'abort-controller';
 
 export const datevConfig = {
     siteName: "DATEV",
-    apiUrl: "https://www.datev.de/web/de/karriere/technisches/karriere-json.json",
-    method: "GET",
+    apiUrl: "https://datev.wd3.myworkdayjobs.com/wday/cxs/datev/Datev_Careers/jobs",
+    baseUrl: "https://datev.wd3.myworkdayjobs.com/Datev_Careers",
+    method: "POST",
+    needsSession: true,
     needsDescriptionScraping: true,
-    descriptionSelector: 'div.details-inner',
-    locationSelector: 'h1',
-    filterKeywords: COMMON_KEYWORDS,
-    getBody: () => null,
-    getJobs: (data) => data?.jobs || [],
+    filterKeywords: [...COMMON_KEYWORDS],
 
-    // ✅ **THIS IS THE FIX**
-    // This tells the scraper the total number of jobs is 45.
-    // The paging logic will see (0 + 45 jobs) is NOT less than (45 total),
-    // and it will stop the loop after one page.
-    getTotal: (data) => data?.jobs?.length || 0,
+    getBody: (offset, limit) => ({
+        "appliedFacets": { "locationCountry": ["dcc5b7608d8644b3a93716604e78e995"] },
+        "limit": 20,
+        "offset": offset,
+        "searchText": ""
+    }),
+
+    getTotal: (data) => data?.total || 0,
+    getJobs: (data) => data?.jobPostings || [],
+
+    // Workday raw job has 'locationsText' field
+    preFilter: createLocationPreFilter({
+        locationFields: ['locationsText', 'title']
+    }),
+
+    getDetails: async (job, sessionHeaders) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        try {
+            const detailsApiUrl = `https://datev.wd3.myworkdayjobs.com/wday/cxs/datev/Datev_Careers${job.externalPath}`;
+            const res = await fetch(detailsApiUrl, { headers: sessionHeaders, signal: controller.signal });
+            if (!res.ok) { return { skip: true }; }
+            const data = await res.json();
+            const jobInfo = data?.jobPostingInfo;
+            if (jobInfo?.jobRequisitionLocation?.country?.descriptor !== "Germany") { return { skip: true }; }
+            return {
+                Description: StripHtml(jobInfo?.jobDescription || ""),
+                ContractType: jobInfo?.timeType || "N/A",
+                Location: jobInfo?.jobRequisitionLocation?.descriptor || jobInfo?.location || "N/A",
+                PostingDate: jobInfo?.startDate || "",
+                ExpirationDate: jobInfo?.endDate || ""
+            };
+        } catch (error) {
+            console.error(`[DATEV] Error getting details for job ${job.bulletFields?.[0]}: ${error.message}`);
+            return { skip: true };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    },
 
     mapper: (job) => ({
-      JobTitle: job.job_title || "",
-      JobID: job.reference_id || "",
-      Location: "",
-      PostingDate: job.publishing_date || "",
-      Department: job.business_unit?.name || "N/A",
-      Description: "",
-      ApplicationURL: `https://www.datev.de${job.fs_url || ""}`,
-      ContractType: job.contract_type?.name || "N/A",
-      ExperienceLevel: job.experience_level?.name || "N/A",
+        JobTitle: job.title || "",
+        JobID: String(job.bulletFields?.[0] || ""),
+        Location: job.locationsText || "",
+        PostingDate: "",
+        ExpirationDate: "",
+        Department: "",
+        Description: "",
+        ApplicationURL: `https://datev.wd3.myworkdayjobs.com/Datev_Careers${job.externalPath}`,
+        ContractType: "",
+        ExperienceLevel: "N/A",
+        Compensation: "N/A"
     })
-}
+};

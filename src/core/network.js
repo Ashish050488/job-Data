@@ -12,7 +12,7 @@ export async function initializeSession(siteConfig) {
     if (!siteConfig.needsSession) return sessionHeaders;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // ✅ Increased to 60 seconds for slow Workday APIs
 
     try {
         console.log(`[${siteConfig.siteName}] Initializing session...`);

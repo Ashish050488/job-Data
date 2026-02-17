@@ -1,4 +1,5 @@
-import { StripHtml, COMMON_KEYWORDS } from "../utils.js"
+import { StripHtml, COMMON_KEYWORDS } from "../utils.js";
+import { createLocationPreFilter } from "../core/Locationprefilters.js";
 import fetch from 'node-fetch';
 
 export const redcarePhramacyConfig = {
@@ -7,76 +8,52 @@ export const redcarePhramacyConfig = {
     method: "GET",
     needsDescriptionScraping: true,
     filterKeywords: [...COMMON_KEYWORDS],
+
     getBody: () => null,
-    
     getJobs: (data) => data?.items || [],
-    
-    // Fix infinite loop
     getTotal: (data) => data?.totalJobs || 0,
 
-    // ✅ ADDED: Pre-filter to ensure we only pick up German jobs.
-    // The API returns 'de', 'nl', 'it', 'at', 'cz'. We only want 'de'.
-    preFilter: (job) => {
-        const country = job.location?.country?.toLowerCase();
-        // Allow Germany ('de') or Remote jobs based in Germany
-        return country === 'de';
+    // Raw job has 'location.country' (country code 'de') and 'location.city'
+    preFilter: (rawJob) => {
+        const locationText = `${rawJob.location?.city || ""} ${rawJob.location?.country || ""}`;
+        return createLocationPreFilter({ locationFields: [] })({ location: locationText });
     },
 
     getDetails: async (job) => {
-        const jobId = job.id;
-        // SmartRecruiters public API for details
-        const detailsApiUrl = `https://api.smartrecruiters.com/v1/companies/Redcare-Pharmacy/postings/${jobId}`;
+        const detailsApiUrl = `https://api.smartrecruiters.com/v1/companies/Redcare-Pharmacy/postings/${job.id}`;
         try {
             const res = await fetch(detailsApiUrl);
-            if (!res.ok) {
-                // console.log(`Redcare details API failed for ${jobId}`);
-                return {};
-            }
+            if (!res.ok) return {};
             const data = await res.json();
             const sections = data?.jobAd?.sections;
-            
-            // Combine all sections for a full description
             const description = [
-                sections?.companyDescription?.title,
-                sections?.companyDescription?.text,
-                sections?.jobDescription?.title,
-                sections?.jobDescription?.text,
-                sections?.qualifications?.title,
-                sections?.qualifications?.text,
-                sections?.additionalInformation?.title,
-                sections?.additionalInformation?.text,
-            ].filter(Boolean).join(" <br/> "); // Use HTML line breaks or spaces
-
-            return {
-                Description: StripHtml(description)
-            };
+                sections?.companyDescription?.title, sections?.companyDescription?.text,
+                sections?.jobDescription?.title, sections?.jobDescription?.text,
+                sections?.qualifications?.title, sections?.qualifications?.text,
+                sections?.additionalInformation?.title, sections?.additionalInformation?.text,
+            ].filter(Boolean).join(" ");
+            return { Description: StripHtml(description) };
         } catch (error) {
-            console.error(`[Redcare Pharmacy] Error fetching details for job ID ${jobId}: ${error.message}`);
-            return { Description: "Error fetching details." };
+            console.error(`[Redcare Pharmacy] Error fetching details for job ${job.id}: ${error.message}`);
+            return {};
         }
     },
 
     mapper: (job) => {
-        // ✅ CLEANER LOCATION
-        let cleanLocation = job.location?.fullLocation || "";
-        if (job.location?.city && job.location?.country) {
-            const countryMap = { 'de': 'Germany', 'at': 'Austria', 'ch': 'Switzerland' };
-            const countryName = countryMap[job.location.country.toLowerCase()] || job.location.country;
-            cleanLocation = `${job.location.city}, ${countryName}`;
-        }
-
+        const countryMap = { 'de': 'Germany', 'at': 'Austria', 'ch': 'Switzerland' };
+        const countryName = countryMap[(job.location?.country || "").toLowerCase()] || job.location?.country || "";
+        const cleanLocation = job.location?.city && countryName
+            ? `${job.location.city}, ${countryName}`
+            : job.location?.fullLocation || "";
         return {
             JobTitle: job.name || "",
             JobID: job.id || "",
             Location: cleanLocation,
             PostingDate: job.releasedDate || "",
-            Description: "", 
+            ExpirationDate: "",
+            Description: "",
             Department: job.department?.label || "N/A",
-
-            // ✅ FIX: Construction of the ApplicationURL
-            // The actual website uses /careers/open-jobs/details/ followed by the ID
             ApplicationURL: `https://www.redcare-pharmacy.com/careers/open-jobs/details/${job.id}`,
-
             ContractType: job.typeOfEmployment?.label || "N/A",
             ExperienceLevel: job.experienceLevel?.label || "N/A",
             Compensation: "N/A"

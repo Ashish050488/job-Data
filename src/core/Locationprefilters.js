@@ -23,7 +23,8 @@ export const GERMAN_CITIES = [
     'gera', 'hanau', 'esslingen', 'ludwigsburg', 'tubingen', 'tübingen',
     'flensburg', 'konstanz', 'worms', 'marburg', 'lüneburg', 'luneburg',
     'bayreuth', 'bamberg', 'plauen', 'neubrandenburg', 'wilhelmshaven',
-    'dormagen', 'bomlitz', 'brunsbüttel', 'brunsbuttel', // ✅ Covestro locations
+    'dormagen', 'bomlitz', 'brunsbüttel', 'brunsbuttel', // Covestro locations
+    'meppen', 'emden', 'cuxhaven', 'celle', 'paderborn', 'reutlingen', // ✅ Added more cities
     'germany', 'deutschland', 'german'
 ];
 
