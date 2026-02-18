@@ -13,12 +13,13 @@ import {
     findJobById,
     deleteJobsByCompany,
     addManualCompany,
-    deleteManualCompany
+    deleteManualCompany,
+    connectToDb
 } from '../Db/databaseManager.js';
 
-// ✅ CRITICAL FIX: Ensure this path is correct. 
-// Move your grokAnalyzer.js file to 'src/core/grokAnalyzer.js' if it fails.
 import { analyzeJobWithGroq } from '../grokAnalyzer.js';
+// ✅ FIXED: Import the correct middleware names
+import { verifyToken, verifyAdmin } from '../middleware/authMiddleware.js';
 
 export const jobsApiRouter = Router();
 
@@ -26,7 +27,6 @@ export const jobsApiRouter = Router();
 // PUBLIC ROUTES
 // ---------------------------------------------------------
 
-// 1. Public Bait
 jobsApiRouter.get('/public-bait', async (req, res) => {
     try {
         const jobs = await getPublicBaitJobs();
@@ -36,7 +36,6 @@ jobsApiRouter.get('/public-bait', async (req, res) => {
     }
 });
 
-// 2. Main Feed
 jobsApiRouter.get('/', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -49,7 +48,6 @@ jobsApiRouter.get('/', async (req, res) => {
     }
 });
 
-// 3. Directory
 jobsApiRouter.get('/directory', async (req, res) => {
     try {
         const directory = await getCompanyDirectoryStats();
@@ -63,7 +61,6 @@ jobsApiRouter.get('/directory', async (req, res) => {
 // ADMIN ROUTES
 // ---------------------------------------------------------
 
-// 4. Review Queue
 jobsApiRouter.get('/admin/review', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -75,7 +72,6 @@ jobsApiRouter.get('/admin/review', async (req, res) => {
     }
 });
 
-// 5. Make Decision (Accept/Reject)
 jobsApiRouter.patch('/admin/decision/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -88,7 +84,6 @@ jobsApiRouter.patch('/admin/decision/:id', async (req, res) => {
     }
 });
 
-// 6. Rejected Jobs List
 jobsApiRouter.get('/rejected', async (req, res) => {
     try {
         const jobs = await getRejectedJobs();
@@ -98,7 +93,6 @@ jobsApiRouter.get('/rejected', async (req, res) => {
     }
 });
 
-// 7. Update Job Feedback
 jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     try {
         const { id } = req.params;
@@ -110,7 +104,6 @@ jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     }
 });
 
-// 8. Re-Analyze Job (AI)
 jobsApiRouter.post('/:id/analyze', async (req, res) => {
     try {
         const { id } = req.params;
@@ -120,7 +113,6 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
         const aiResult = await analyzeJobWithGroq(job.JobTitle, job.Description, job.Location);
         if (!aiResult) return res.status(500).json({ error: "AI Analysis failed" });
 
-        // ✅ UPDATED LOGIC: Apply the same strict filtering as in processor.js
         let newStatus = "pending_review";
         let rejectionReason = null;
 
@@ -135,16 +127,15 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
             rejectionReason = "German Language Required";
         }
 
-        const { connectToDb } = await import('../Db/databaseManager.js');
         const db = await connectToDb();
         
         await db.collection('jobs').updateOne(
             { _id: new ObjectId(id) },
             { 
                 $set: { 
-                    EnglishSpeaking: aiResult.english_speaking, // ✅ NEW FIELD
+                    EnglishSpeaking: aiResult.english_speaking,
                     GermanRequired: aiResult.german_required,
-                    LocationClassification: aiResult.location_classification, // ✅ NEW FIELD
+                    LocationClassification: aiResult.location_classification,
                     Domain: aiResult.domain,
                     SubDomain: aiResult.sub_domain,
                     ConfidenceScore: aiResult.confidence,
@@ -167,7 +158,6 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
     }
 });
 
-// 9. Add Manual Company
 jobsApiRouter.post('/companies', async (req, res) => {
     try {
         const { name, domain, cities } = req.body;
@@ -179,10 +169,9 @@ jobsApiRouter.post('/companies', async (req, res) => {
     }
 });
 
-// 10. Delete Company (Handles both Scraped and Manual)
 jobsApiRouter.delete('/company', async (req, res) => {
     try {
-        const { name } = req.query; // ?name=Zalando
+        const { name } = req.query;
         if (name) {
             const result = await deleteJobsByCompany(name);
             return res.status(200).json({ message: `Deleted ${result.deletedCount} jobs for ${name}.` });
@@ -203,7 +192,6 @@ jobsApiRouter.delete('/companies/:id', async (req, res) => {
     }
 });
 
-// 11. Add Manual Job
 jobsApiRouter.post('/', async (req, res) => {
     try {
         const jobData = req.body;
@@ -215,7 +203,6 @@ jobsApiRouter.post('/', async (req, res) => {
     }
 });
 
-// 12. Delete Job ID
 jobsApiRouter.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -224,5 +211,27 @@ jobsApiRouter.delete('/:id', async (req, res) => {
         res.status(200).json({ message: 'Job deleted.' });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ✅ TEST LOGS ROUTE - With correct auth middleware and collection name
+jobsApiRouter.get('/test-logs', verifyToken, verifyAdmin, async (req, res) => {
+    console.log('[API] test-logs route hit');
+    try {
+        const db = await connectToDb();
+        console.log('[API] DB connected');
+        
+        // ✅ FIXED: Lowercase 'j' to match your databaseManager.js
+        const logs = await db.collection('jobTestLogs')
+            .find({})
+            .sort({ scrapedAt: -1 })
+            .limit(500)
+            .toArray();
+        
+        console.log('[API] Found logs:', logs.length);
+        res.status(200).json(logs);
+    } catch (error) {
+        console.error('[API] Error fetching test logs:', error);
+        res.status(500).json({ error: 'Failed to fetch test logs', details: error.message });
     }
 });
