@@ -113,7 +113,7 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // It passed all filters and is about to cost money/tokens
     await Analytics.increment('jobsSentToAI');
 
-    // 6. 🧠 AI CLASSIFICATION
+    // 6. 🧠 AI CLASSIFICATION (GERMAN & LOCATION ONLY - NO ENGLISH CHECK)
     const aiResult = await analyzeJobWithGroq(mappedJob.JobTitle, mappedJob.Description, mappedJob.Location);
 
     if (!aiResult) {
@@ -124,7 +124,6 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // ✅ 7. STRICT FILTERING LOGIC - RETURN NULL FOR INVALID JOBS
     // Only save jobs that meet ALL criteria:
     // - Location must be Germany
-    // - Job must be English-speaking
     // - German must NOT be required
     
     let finalDecision = "accepted";
@@ -134,10 +133,6 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         finalDecision = "rejected";
         rejectionReason = "Location not in Germany";
         console.log(`❌ [Rejected - Not Germany] ${mappedJob.JobTitle} (Location: ${aiResult.location_classification})`);
-    } else if (aiResult.english_speaking !== true) {
-        finalDecision = "rejected";
-        rejectionReason = "Not English-speaking";
-        console.log(`❌ [Rejected - Not English-speaking] ${mappedJob.JobTitle}`);
     } else if (aiResult.german_required === true) {
         finalDecision = "rejected";
         rejectionReason = "German language required";
@@ -149,13 +144,12 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // ✅ 8. SAVE TO TEST LOG (ALL JOBS - ACCEPTED + REJECTED)
     const testLogData = {
         ...mappedJob,
-        EnglishSpeaking: aiResult.english_speaking,
         GermanRequired: aiResult.german_required,
         LocationClassification: aiResult.location_classification,
         Domain: aiResult.domain,
         SubDomain: aiResult.sub_domain,
         ConfidenceScore: aiResult.confidence,
-        Evidence: aiResult.evidence, // ✅ NEW: AI reasoning
+        Evidence: aiResult.evidence, // ✅ NEW: AI reasoning (no english_reason)
         FinalDecision: finalDecision, // ✅ NEW: "accepted" or "rejected"
         RejectionReason: rejectionReason, // ✅ NEW: Why rejected
         Status: finalDecision === "accepted" ? "pending_review" : "rejected"
@@ -174,8 +168,7 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // ✅ ANALYTICS 3: Valid job found
     await Analytics.increment('jobsPendingReview');
 
-    // 10. Create Model with all AI metadata (for main collection)
-    mappedJob.EnglishSpeaking = aiResult.english_speaking;
+    // 10. Create Model with all AI metadata (for main collection) - NO EnglishSpeaking field
     mappedJob.GermanRequired = aiResult.german_required;
     mappedJob.LocationClassification = aiResult.location_classification;
     mappedJob.Domain = aiResult.domain;

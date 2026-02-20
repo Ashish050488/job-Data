@@ -1,6 +1,6 @@
 import { createJobModel } from '../models/jobModel.js';
 import { MongoClient, ObjectId } from 'mongodb';
-import mongoose from 'mongoose'; // ✅ 1. Import Mongoose
+import mongoose from 'mongoose';
 import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
@@ -12,11 +12,8 @@ let db;
 export async function connectToDb() {
     if (db) return db;
     
-    // 1. Connect Native Client (Existing)
     await client.connect();
     
-    // ✅ 2. Connect Mongoose (New - Fixes the Analytics Timeout)
-    // We need this because AnalyticsModel uses Mongoose, not the native client.
     if (mongoose.connection.readyState === 0) {
         await mongoose.connect(MONGO_URI);
         console.log("🍃 Mongoose Connected");
@@ -68,7 +65,6 @@ export async function saveJobs(jobs) {
     await jobsCollection.bulkWrite(operations);
 }
 
-// ✅ NEW FUNCTION: Save all jobs (accepted + rejected) to test log collection
 export async function saveJobTestLog(jobTestLog) {
     if (!jobTestLog) return;
     const db = await connectToDb();
@@ -116,7 +112,7 @@ export async function getSubscribedUsers() {
     const usersCollection = db.collection('users');
    return await usersCollection.find({ 
         isSubscribed: true,
-        isWaitlist: { $ne: true } // "Not Equal to true"
+        isWaitlist: { $ne: true }
     }).toArray();
 }
 
@@ -124,10 +120,9 @@ export async function findMatchingJobs(user) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ UPDATED FILTER: Only match jobs that meet ALL criteria
+    // ✅ UPDATED FILTER: NO English check - only German and Location
     const query = {
-        Status: 'active', // ✅ Only active jobs
-        EnglishSpeaking: true, // ✅ Must be English-speaking
+        Status: 'active',
         GermanRequired: false, // ✅ German must NOT be required
         LocationClassification: "Germany", // ✅ Must be in Germany
         Department: { $in: user.desiredDomains },
@@ -171,7 +166,6 @@ export async function addCuratedJob(jobData) {
         Company: jobData.Company,
         Location: jobData.Location,
         Department: jobData.Department,
-        EnglishSpeaking: jobData.EnglishSpeaking ?? true, // ✅ Default to true for manual jobs
         GermanRequired: jobData.GermanRequired ?? false, // ✅ Default to false for manual jobs
         LocationClassification: "Germany", // ✅ Manual jobs are assumed to be in Germany
         Description: jobData.Description || `Manually curated: ${jobData.JobTitle}`,
@@ -208,10 +202,9 @@ export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ UPDATED FILTER: Only show jobs that meet ALL criteria
+    // ✅ UPDATED FILTER: NO English check
     const jobs = await jobsCollection.find({
         Status: 'active',
-        EnglishSpeaking: true, // ✅ Must be English-speaking
         GermanRequired: false, // ✅ German must NOT be required
         LocationClassification: "Germany" // ✅ Must be in Germany
     })
@@ -220,7 +213,7 @@ export async function getPublicBaitJobs() {
         .project({
             JobTitle: 1, Company: 1, Location: 1, Department: 1,
             PostedDate: 1, ApplicationURL: 1, GermanRequired: 1,
-            EnglishSpeaking: 1, LocationClassification: 1 // ✅ Include new fields
+            LocationClassification: 1
         })
         .toArray();
     return jobs;
@@ -262,11 +255,10 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // ✅ UPDATED FILTER: Only show jobs that meet ALL criteria
+    // ✅ UPDATED FILTER: NO English check
     const query = {
         Status: 'active',
         thumbStatus: { $ne: 'down' },
-        EnglishSpeaking: true, // ✅ Must be English-speaking
         GermanRequired: false, // ✅ German must NOT be required
         LocationClassification: "Germany" // ✅ Must be in Germany
     };
@@ -287,7 +279,6 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
     return { jobs, totalJobs, companies };
 }
 
-// 2. Get Rejected Jobs
 export async function getRejectedJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -298,18 +289,16 @@ export async function getRejectedJobs() {
         .toArray();
 }
 
-// 3. Admin: Get Jobs for Review
 export async function getJobsForReview(page = 1, limit = 50) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // Filter: Only Pending Review jobs
     const query = { Status: 'pending_review' };
 
     const totalJobs = await jobsCollection.countDocuments(query);
     const jobs = await jobsCollection.find(query)
-        .sort({ ConfidenceScore: -1, scrapedAt: -1 }) // Show high confidence first
+        .sort({ ConfidenceScore: -1, scrapedAt: -1 })
         .skip(skip)
         .limit(limit)
         .toArray();
@@ -322,7 +311,6 @@ export async function getJobsForReview(page = 1, limit = 50) {
     };
 }
 
-// 4. Admin: Review Decision
 export async function reviewJobDecision(jobId, decision) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -343,7 +331,6 @@ export async function reviewJobDecision(jobId, decision) {
     return { success: true, status: newStatus };
 }
 
-// 5. Update Job Feedback (Thumbs Up/Down)
 export async function updateJobFeedback(jobId, status) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
@@ -354,19 +341,17 @@ export async function updateJobFeedback(jobId, status) {
     );
 }
 
-// 6. Directory Stats (Merged: Scraped + Manual)
 export async function getCompanyDirectoryStats() {
     try {
         const db = await connectToDb();
 
-        // ✅ UPDATED: Only count jobs that meet ALL criteria
+        // ✅ UPDATED: NO English check
         const jobsCollection = db.collection('jobs');
         const pipeline = [
             { 
                 $match: { 
                     Status: 'active', 
                     thumbStatus: { $ne: 'down' },
-                    EnglishSpeaking: true, // ✅ Must be English-speaking
                     GermanRequired: false, // ✅ German must NOT be required
                     LocationClassification: "Germany" // ✅ Must be in Germany
                 } 
@@ -383,7 +368,6 @@ export async function getCompanyDirectoryStats() {
         ];
         const scrapedStats = await jobsCollection.aggregate(pipeline).toArray();
 
-        // Format Scraped Data
         const formattedScraped = scrapedStats.map(stat => ({
             _id: stat._id, 
             companyName: stat._id || "Unknown",
@@ -393,11 +377,9 @@ export async function getCompanyDirectoryStats() {
             source: 'scraped'
         }));
 
-        // 2. Get Manual Companies (From 'manual_companies' collection)
         const manualCollection = db.collection('manual_companies');
         const manualCompanies = await manualCollection.find({}).toArray();
 
-        // Format Manual Data
         const formattedManual = manualCompanies.map(c => ({
             _id: c._id.toString(),
             companyName: c.name,
@@ -407,7 +389,6 @@ export async function getCompanyDirectoryStats() {
             source: 'manual'
         }));
 
-        // 3. Merge (Avoid duplicates - prefer scraped if both exist)
         const scrapedNames = new Set(formattedScraped.map(c => c.companyName.toLowerCase()));
         const uniqueManual = formattedManual.filter(c => !scrapedNames.has(c.companyName.toLowerCase()));
 
@@ -419,13 +400,11 @@ export async function getCompanyDirectoryStats() {
     }
 }
 
-// 7. Helper: Find Job By ID (For Re-Analyze)
 export async function findJobById(id) {
     const db = await connectToDb();
     return await db.collection('jobs').findOne({ _id: new ObjectId(id) });
 }
 
-// 8. Helper: Delete Jobs By Company Name (For Admin Delete)
 export async function deleteJobsByCompany(companyName) {
     const db = await connectToDb();
     console.log(`[Admin] Deleting all jobs for company: ${companyName}`);
@@ -434,12 +413,10 @@ export async function deleteJobsByCompany(companyName) {
     });
 }
 
-// 9. Helper: Add Manual Company
 export async function addManualCompany(data) {
     const db = await connectToDb();
     const companiesCollection = db.collection('manual_companies');
 
-    // Check for duplicates
     const exists = await companiesCollection.findOne({
         name: { $regex: new RegExp(`^${data.name}$`, 'i') }
     });
@@ -451,7 +428,6 @@ export async function addManualCompany(data) {
     });
 }
 
-// 10. Helper: Delete Manual Company
 export async function deleteManualCompany(id) {
     const db = await connectToDb();
     const companiesCollection = db.collection('manual_companies');
@@ -462,32 +438,25 @@ export async function registerUser({ email, password, name, role = 'user', locat
     const db = await connectToDb();
     const usersCollection = db.collection('users');
 
-    // 1. Check if user exists
     const existingUser = await usersCollection.findOne({ email });
     if (existingUser) {
-        // Optional: If they are already on the waitlist, you might want to just return success 
-        // to prevent leaking which emails are registered. 
-        // For now, we keep the error to match your previous logic.
         throw new Error("User already exists");
     }
 
-    // 2. Hash Password (ONLY if password exists)
     let hashedPassword = null;
     if (password) {
         const salt = await bcrypt.genSalt(10);
         hashedPassword = await bcrypt.hash(password, salt);
     }
 
-    // 3. Create User Model
-    // We pass 'location', 'domain', and 'isWaitlist' so they get saved to the DB
     const newUser = createUserModel({
         email,
-        password: hashedPassword, // Will be null for talent pool
+        password: hashedPassword,
         name,
         role,
-        location,    // ✅ Added
-        domain,      // ✅ Added
-        isWaitlist,  // ✅ Added
+        location,
+        domain,
+        isWaitlist,
         createdAt: new Date()
     });
 
@@ -501,23 +470,19 @@ export async function registerUser({ email, password, name, role = 'user', locat
     };
 }
 
-// 2. Login User
 export async function loginUser(email, password) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
 
-    // Find user
     const user = await usersCollection.findOne({ email });
     if (!user) {
         throw new Error("Invalid credentials");
     }
 
-    // Check if user has a password (legacy subscribers might not)
     if (!user.password) {
         throw new Error("Please register an account first.");
     }
 
-    // Compare passwords
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
         throw new Error("Invalid credentials");
@@ -526,10 +491,8 @@ export async function loginUser(email, password) {
     return { id: user._id, email: user.email, role: user.role, name: user.name };
 }
 
-// 3. Get User Profile (Protected)
 export async function getUserProfile(userId) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
-    // Return user without password
     return await usersCollection.findOne({ _id: new ObjectId(userId) }, { projection: { password: 0 } });
 }
