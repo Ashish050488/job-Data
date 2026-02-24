@@ -30,7 +30,7 @@ export const SITES_CONFIG = [
 
 
   // --------------------------------------
-  // greenhouseConfig,
+  greenhouseConfig,
   ashbyConfig,
 
 
