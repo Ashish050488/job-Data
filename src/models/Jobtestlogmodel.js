@@ -2,6 +2,7 @@
  * Job Test Log Model
  * Saves ALL jobs (accepted + rejected) for testing and analysis
  * Includes AI evidence/reasoning for decisions
+ * NO LOCATION CLASSIFICATION - All jobs assumed to be in Germany
  */
 
 const jobTestLogSchemaDefinition = {
@@ -10,30 +11,26 @@ const jobTestLogSchemaDefinition = {
     JobTitle: { type: String, required: true, trim: true },
     ApplicationURL: { type: String, required: true },
     Description: { type: String, default: "" },
-    Location: { type: String, default: "N/A" },
+    Location: { type: String, default: "N/A" }, // ✅ Raw location from source (not classified)
     Company: { type: String, default: "N/A" },
     
     // --- CLASSIFICATION FIELDS ---
-    EnglishSpeaking: { type: Boolean, default: false },
     GermanRequired: { type: Boolean, default: false },
-    LocationClassification: { type: String, default: "Unclear" },
     Domain: { type: String, default: "Unclear" },
     SubDomain: { type: String, default: "Other" },
     ConfidenceScore: { type: Number, default: 0 },
     
-    // --- AI EVIDENCE (NEW) ---
+    // --- AI EVIDENCE (GERMAN ONLY) ---
     Evidence: {
         type: Object,
         default: {
-            location_reason: "",
-            english_reason: "",
             german_reason: ""
         }
     },
     
     // --- FINAL DECISION ---
     FinalDecision: { type: String, default: "rejected" }, // "accepted" or "rejected"
-    RejectionReason: { type: String, default: null }, // Why it was rejected (if applicable)
+    RejectionReason: { type: String, default: null },
     
     // --- WORKFLOW STATUS ---
     Status: { type: String, default: "pending_review" },
@@ -82,10 +79,34 @@ class JobTestLog {
     }
 }
 
-export const createJobTestLog = (mappedJob, siteName) => {
-    return new JobTestLog({
-        ...mappedJob,
-        sourceSite: siteName,
-        Company: mappedJob.Company || siteName,
-    });
+export function createJobTestLog(jobData, sourceSite) {
+    return {
+        JobID: jobData.JobID,
+        sourceSite: sourceSite,
+        JobTitle: jobData.JobTitle,
+        Company: jobData.Company,
+        Location: jobData.Location, // ✅ Raw location (e.g., "Berlin", "Munich, Hamburg")
+        Description: jobData.Description,
+        ApplicationURL: jobData.ApplicationURL,
+        PostedDate: jobData.PostedDate || jobData.DatePosted || null,
+        
+        // ✅ AI Classification Results (NO LOCATION CHECK)
+        GermanRequired: jobData.GermanRequired,
+        Domain: jobData.Domain || "N/A",
+        SubDomain: jobData.SubDomain || "N/A",
+        ConfidenceScore: jobData.ConfidenceScore || 0,
+        
+        // ✅ Evidence (GERMAN ONLY - NO LOCATION REASON)
+        Evidence: jobData.Evidence || {
+            german_reason: ""
+        },
+        
+        // ✅ Decision Info
+        FinalDecision: jobData.FinalDecision || "pending",
+        RejectionReason: jobData.RejectionReason || null,
+        Status: jobData.Status || "pending_review",
+        
+        createdAt: new Date(),
+        scrapedAt: new Date()
+    };
 }

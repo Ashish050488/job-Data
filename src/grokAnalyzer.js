@@ -8,20 +8,18 @@ const MODEL_NAME = "llama-3.1-8b-instant";
 const MAX_RETRIES = 5;
 
 /**
- * Analyzes a job description using Groq - GERMAN & LOCATION ONLY
- * NO English checking - ONLY German requirement detection
+ * Analyzes a job description using Groq - GERMAN ONLY (NO LOCATION CHECK)
  */
-export async function analyzeJobWithGroq(jobTitle, description, locationRaw) {
+export async function analyzeJobWithGroq(jobTitle, description) {
     if (!description || description.length < 50) return null;
 
     const descriptionSnippet = description.substring(0, 4000);
 
-  const prompt = `
+    const prompt = `
 You are a strict evidence-only classifier for German language requirements.
 You MUST NOT infer anything that is not explicitly stated in the provided text.
 
 JOB TITLE: "${jobTitle}"
-LOCATION RAW: "${locationRaw}"
 DESCRIPTION: "${descriptionSnippet}..."
 
 --- 🚨 ABSOLUTE RULES (CRITICAL) ---
@@ -29,28 +27,11 @@ DESCRIPTION: "${descriptionSnippet}..."
 1) Do NOT use the language of the description (English/German) as evidence for german_required.
 2) Only mark a field TRUE if there is EXPLICIT proof in the text.
 3) If explicit proof is missing, mark the field FALSE.
-4) Evidence MUST contain EXACT QUOTES from LOCATION RAW or DESCRIPTION.
+4) Evidence MUST contain EXACT QUOTES from DESCRIPTION.
    - Use double quotes "" to show the exact text
    - Do NOT paraphrase or summarize
    - Do NOT invent quotes
 5) If you cannot find a quote, write: "No explicit statement found in DESCRIPTION."
-
---- LOCATION CLASSIFICATION ---
-
-Classify as "Germany" if LOCATION RAW contains ANY of:
-- German city names: Berlin, Munich, Hamburg, Frankfurt, Cologne, Stuttgart, Düsseldorf, 
-  Dortmund, Essen, Leipzig, Dresden, Hanover, Nuremberg, Leverkusen, Bomlitz, Dormagen, 
-  Brunsbüttel, Krefeld, Meppen, Aachen, Bonn, etc.
-- Country indicators: "Germany", "Deutschland", "DE", "German"
-- Remote in Germany: "Remote - Germany", "Remote (Germany)", "Homeoffice Deutschland"
-- State names: "North Rhine-Westphalia", "Lower Saxony", "Bavaria", "Schleswig-Holstein"
-
-Classify as "Not Germany" if LOCATION RAW contains ONLY non-German locations:
-- London, Paris, Vienna, Zurich, Amsterdam, Madrid, etc.
-- AND no German city or "Germany" is mentioned
-
-Classify as "Unclear" if:
-- LOCATION RAW is empty, "N/A", or ambiguous like "Remote" without country
 
 --- GERMAN REQUIRED (german_required boolean) ---
 
@@ -89,6 +70,11 @@ D) WORKING LANGUAGE STATEMENTS:
 - "German is the business language"
 - "Arbeitssprache Deutsch"
 
+E) FLUENCY REQUIREMENTS:
+- "Fluent in German" or "Fluency in German" - indicates requirement
+- "Fließend Deutsch" - indicates fluency requirement
+- "Native German" or "Native-level German" - indicates requirement
+
 ---
 
 Set german_required = FALSE if:
@@ -118,6 +104,8 @@ MARK TRUE (has explicit requirement keyword):
 ✅ "German (B2 minimum)" → TRUE (has level = requirement)
 ✅ "German is mandatory" → TRUE (has "mandatory")
 ✅ "German required" → TRUE (has "required")
+✅ "Fluency in German" → TRUE (fluency = requirement)
+✅ "Fluent in German (mandatory)" → TRUE (explicit requirement)
 ✅ "Arbeitssprache Deutsch" → TRUE (working language)
 
 MARK FALSE (NO explicit requirement keyword):
@@ -142,32 +130,28 @@ Sub-domain: Be specific (e.g., "AI", "Backend", "Data Science", "DevOps", "Produ
 --- CONFIDENCE SCORE (0.0 - 1.0) ---
 
 High confidence (0.90-0.95):
-- Location is clearly "Germany" with explicit city/country name
 - german_required determination has explicit evidence (keyword found or proven absence)
 
 Medium confidence (0.70-0.85):
-- Location is clear but context-based
 - german_required lacks perfect quote but context is strong
 
 Low confidence (0.50-0.65):
-- Any key field lacks explicit evidence
-- Ambiguous location
 - Unclear language requirements
 
 --- EVIDENCE FORMAT (CRITICAL) ---
 
-For each evidence field, provide:
-1. WHERE you found the information (LOCATION RAW or DESCRIPTION)
+For german_reason field, provide:
+1. WHERE you found the information (DESCRIPTION)
 2. EXACT QUOTE in "double quotes"
 3. Brief explanation (1-2 sentences)
 
 Examples:
 
-Good location evidence:
-"LOCATION RAW contains: 'Leverkusen' which is a German city, classified as Germany."
-
 Good german evidence (required - has explicit keyword):
 "DESCRIPTION contains: 'Deutschkenntnisse erforderlich'. The word 'erforderlich' means required, classified as German required."
+
+Another example:
+"DESCRIPTION contains: 'Fluency in German & English (mandatory)'. The word 'Fluency' combined with 'mandatory' indicates German is required."
 
 Another example:
 "DESCRIPTION contains: 'German (B2 minimum)'. Specifies B2 level which indicates requirement, classified as German required."
@@ -189,13 +173,11 @@ Bad evidence (DO NOT DO THIS):
 
 Return ONLY valid JSON (no markdown, no backticks):
 {
-  "location_classification": "Germany" | "Not Germany" | "Unclear",
   "german_required": true | false,
   "domain": "String",
   "sub_domain": "String",
   "confidence": Number,
   "evidence": {
-    "location_reason": "2-3 sentences with EXACT quotes in \\"double quotes\\"",
     "german_reason": "2-3 sentences with EXACT quotes in \\"double quotes\\""
   }
 }
@@ -219,18 +201,16 @@ Return ONLY valid JSON (no markdown, no backticks):
             const data = JSON.parse(content);
             
             const normalizedData = {
-                location_classification: data.location_classification,
                 german_required: data.german_required === true || data.german_required === "true",
                 domain: data.domain,
                 sub_domain: data.sub_domain,
                 confidence: Number(data.confidence) || 0,
                 evidence: data.evidence || {
-                    location_reason: "No reason provided",
                     german_reason: "No reason provided"
                 }
             };
             
-            console.log(`[AI] ${jobTitle.substring(0, 20)}... | Ger: ${normalizedData.german_required} | Loc: ${normalizedData.location_classification}`);
+            console.log(`[AI] ${jobTitle.substring(0, 20)}... | Ger: ${normalizedData.german_required}`);
             return normalizedData;
 
         } catch (err) {
@@ -262,6 +242,6 @@ Return ONLY valid JSON (no markdown, no backticks):
 }
 
 export async function isGermanRequired(description, jobTitle) {
-    const result = await analyzeJobWithGroq(jobTitle, description, "Unknown");
+    const result = await analyzeJobWithGroq(jobTitle, description);
     return result ? result.german_required : true; 
 }

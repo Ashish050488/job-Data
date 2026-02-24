@@ -1,10 +1,6 @@
 /**
- * This file defines the schema for a 'Job' and provides a class
- * to create and validate job documents.
- */
-
-/**
- * This file defines the schema for a 'Job'
+ * Job Model - NO LOCATION CLASSIFICATION
+ * All jobs assumed to be in Germany (pre-filtered by sources/configs)
  */
 
 const jobSchemaDefinition = {
@@ -13,22 +9,17 @@ const jobSchemaDefinition = {
     JobTitle: { type: String, required: true, trim: true },
     ApplicationURL: { type: String, required: true },
     Description: { type: String, default: "" },
-    Location: { type: String, default: "N/A" },
+    Location: { type: String, default: "N/A" }, // ✅ Raw location (not classified)
     Company: { type: String, default: "N/A" },
     
     // --- CLASSIFICATION FIELDS ---
-    EnglishSpeaking: { type: Boolean, default: false }, // ✅ NEW: Is this an English-speaking job?
-    GermanRequired: { type: Boolean, default: false },  // Is German mandatory?
-    LocationClassification: { type: String, default: "Unclear" }, // ✅ NEW: "Germany", "Not Germany", "Unclear"
+    GermanRequired: { type: Boolean, default: false },
     Domain: { type: String, default: "Unclear" },
     SubDomain: { type: String, default: "Other" },
     ConfidenceScore: { type: Number, default: 0 },
     
     // --- WORKFLOW STATUS ---
-    // 'pending_review' = Waiting for human check
-    // 'active'         = Live on website
-    // 'rejected'       = Hidden (but ID kept for deduplication)
-    Status: { type: String, default: "pending_review" }, 
+    Status: { type: String, default: "pending_review" },
 
     Department: { type: String, default: "N/A" },
     ContractType: { type: String, default: "N/A" },
@@ -37,13 +28,13 @@ const jobSchemaDefinition = {
     createdAt: { type: Date },
     updatedAt: { type: Date },
     scrapedAt: { type: Date },
-    thumbStatus: { type: String, default: null } 
+    thumbStatus: { type: String, default: null }
 };
 
 class Job {
     constructor(data) {
         this.createdAt = data.createdAt ? new Date(data.createdAt) : new Date();
-        this.updatedAt = new Date(); 
+        this.updatedAt = new Date();
         this.scrapedAt = new Date();
 
         for (const key in jobSchemaDefinition) {
@@ -60,7 +51,6 @@ class Job {
                 } else if (schemaField.type === Number) {
                     this[key] = Number(value) || schemaField.default;
                 } else if (schemaField.type === Boolean) {
-                    // ✅ FIX: Properly convert string booleans to actual booleans
                     if (typeof value === 'string') {
                         this[key] = value === 'true';
                     } else {

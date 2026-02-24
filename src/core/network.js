@@ -1,4 +1,3 @@
-// src/scraper/network.js
 import fetch from 'node-fetch';
 import { AbortController } from 'abort-controller';
 
@@ -9,26 +8,28 @@ export async function initializeSession(siteConfig) {
     const sessionHeaders = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
     };
+    
+    // ✅ Skip session initialization for Greenhouse and Ashby
+    if (siteConfig.siteName === "Greenhouse Jobs" || siteConfig.siteName === "Ashby Jobs") {
+        return sessionHeaders;
+    }
+    
     if (!siteConfig.needsSession) return sessionHeaders;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // ✅ Increased to 60 seconds for slow Workday APIs
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
         console.log(`[${siteConfig.siteName}] Initializing session...`);
         const res = await fetch(siteConfig.baseUrl, { headers: sessionHeaders, signal: controller.signal });
         
-        // This site sends multiple cookies; we need to read them all.
         const cookies = res.headers.raw()['set-cookie'];
         if (cookies) {
-            // Join all cookies into a single string for the 'Cookie' header.
             sessionHeaders['Cookie'] = cookies.join('; ');
 
-            // Find the specific XSRF-TOKEN from the array of cookies.
             const xsrfCookie = cookies.find(c => c.startsWith('XSRF-TOKEN='));
             if (xsrfCookie) {
                 const token = xsrfCookie.split(';')[0].split('=')[1];
-                // Add the required X-XSRF-TOKEN header for the POST request.
                 sessionHeaders['X-XSRF-TOKEN'] = decodeURIComponent(token);
             }
         }
@@ -43,9 +44,13 @@ export async function initializeSession(siteConfig) {
 
 /**
  * Fetches a single page of job listings from an API.
- * (This function does not need to be changed)
  */
 export async function fetchJobsPage(siteConfig, offset, limit, sessionHeaders) {
+    // ✅ Special handling for configs with custom fetchPage method
+    if (typeof siteConfig.fetchPage === 'function') {
+        return await siteConfig.fetchPage(offset, limit);
+    }
+    
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 

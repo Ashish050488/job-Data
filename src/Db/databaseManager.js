@@ -88,12 +88,17 @@ export async function saveJobTestLog(jobTestLog) {
 export async function deleteOldJobs(siteName, scrapeStartTime) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
+    
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
     const result = await jobsCollection.deleteMany({
         sourceSite: siteName,
-        updatedAt: { $lt: scrapeStartTime }
+        updatedAt: { $lt: sevenDaysAgo }
     });
+    
     if (result.deletedCount > 0) {
-        console.log(`[${siteName}] Deleted ${result.deletedCount} expired jobs.`);
+        console.log(`[${siteName}] Deleted ${result.deletedCount} jobs older than 7 days.`);
     }
 }
 
@@ -120,11 +125,10 @@ export async function findMatchingJobs(user) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ UPDATED FILTER: NO English check - only German and Location
+    // ✅ REMOVED: LocationClassification check
     const query = {
         Status: 'active',
-        GermanRequired: false, // ✅ German must NOT be required
-        LocationClassification: "Germany", // ✅ Must be in Germany
+        GermanRequired: false,
         Department: { $in: user.desiredDomains },
         JobID: { $nin: user.sentJobIds },
     };
@@ -159,6 +163,8 @@ export async function addCuratedJob(jobData) {
         throw new Error('This Application URL already exists in the database.');
     }
     const jobID = `curated-${new Date().getTime()}`;
+    
+    // ✅ REMOVED: LocationClassification
     const jobToSave = createJobModel({
         JobID: jobID,
         JobTitle: jobData.JobTitle,
@@ -166,8 +172,7 @@ export async function addCuratedJob(jobData) {
         Company: jobData.Company,
         Location: jobData.Location,
         Department: jobData.Department,
-        GermanRequired: jobData.GermanRequired ?? false, // ✅ Default to false for manual jobs
-        LocationClassification: "Germany", // ✅ Manual jobs are assumed to be in Germany
+        GermanRequired: jobData.GermanRequired ?? false,
         Description: jobData.Description || `Manually curated: ${jobData.JobTitle}`,
         PostedDate: jobData.PostedDate || new Date().toISOString(),
         ContractType: jobData.ContractType,
@@ -202,18 +207,16 @@ export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ UPDATED FILTER: NO English check
+    // ✅ REMOVED: LocationClassification check
     const jobs = await jobsCollection.find({
         Status: 'active',
-        GermanRequired: false, // ✅ German must NOT be required
-        LocationClassification: "Germany" // ✅ Must be in Germany
+        GermanRequired: false
     })
         .sort({ PostedDate: -1, createdAt: -1 })
         .limit(9)
         .project({
             JobTitle: 1, Company: 1, Location: 1, Department: 1,
-            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1,
-            LocationClassification: 1
+            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1
         })
         .toArray();
     return jobs;
@@ -249,18 +252,16 @@ export async function addSubscriber(data) {
     return { success: true, email: newUser.email };
 }
 
-
 export async function getJobsPaginated(page = 1, limit = 50, companyFilter = null) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // ✅ UPDATED FILTER: NO English check
+    // ✅ REMOVED: LocationClassification check
     const query = {
         Status: 'active',
         thumbStatus: { $ne: 'down' },
-        GermanRequired: false, // ✅ German must NOT be required
-        LocationClassification: "Germany" // ✅ Must be in Germany
+        GermanRequired: false
     };
 
     if (companyFilter) {
@@ -345,15 +346,15 @@ export async function getCompanyDirectoryStats() {
     try {
         const db = await connectToDb();
 
-        // ✅ UPDATED: NO English check
         const jobsCollection = db.collection('jobs');
+        
+        // ✅ REMOVED: LocationClassification check
         const pipeline = [
             { 
                 $match: { 
                     Status: 'active', 
                     thumbStatus: { $ne: 'down' },
-                    GermanRequired: false, // ✅ German must NOT be required
-                    LocationClassification: "Germany" // ✅ Must be in Germany
+                    GermanRequired: false
                 } 
             },
             {

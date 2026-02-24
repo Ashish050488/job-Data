@@ -22,14 +22,29 @@ import { kauflandConfig } from './CompanyConfig/kauflandConfig.js';
 import { edekaConfig } from './CompanyConfig/edekaConfig.js';
 import { auto1GroupConfig } from './CompanyConfig/auto1GroupConfig.js';
 import { sixtConfig } from './CompanyConfig/sixtConfig.js';
-
+import { greenhouseConfig } from './CompanyConfig/greenhouseConfig.js';
+import { ashbyConfig } from './CompanyConfig/ashbyConfig.js';
 
 export const SITES_CONFIG = [
+
+
+
+  // --------------------------------------
+  // greenhouseConfig,
+  ashbyConfig,
+
+
+
+
+
+
+
+  // --------------------------------------
 // mercedesConfig,
 // datevConfig,
-tradeRepublicConfig,
+// tradeRepublicConfig,
 // almediaConfig,
-deutscheTelekomConfig,
+// deutscheTelekomConfig,
 // airbusConfig,
 // infineonConfig,
 // heidelbergMaterialsConfig,
@@ -40,7 +55,7 @@ deutscheTelekomConfig,
 // lidlDeConfig,
 // kauflandConfig,
 // edekaConfig,
-covestroConfig,
+// covestroConfig,
 // aldiSudConfig,
 // redcarePhramacyConfig,
 // auto1GroupConfig,

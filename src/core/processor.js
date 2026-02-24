@@ -2,26 +2,18 @@ import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
 import { AbortController } from 'abort-controller';
 
-// ✅ FIX: Import the correct Groq function name
 import { analyzeJobWithGroq } from "../grokAnalyzer.js"; 
 import { createJobModel } from '../models/jobModel.js';
-import { createJobTestLog } from '../models/Jobtestlogmodel.js'; // ✅ NEW
-import { saveJobTestLog } from '../Db/databaseManager.js'; // ✅ NEW
-import { Analytics } from '../models/analyticsModel.js'; // ✅ ADDED: Analytics Model
+import { createJobTestLog } from '../models/Jobtestlogmodel.js';
+import { saveJobTestLog } from '../Db/databaseManager.js';
+import { Analytics } from '../models/analyticsModel.js';
 import { BANNED_ROLES } from '../utils.js';
 
-/**
- * 1. HARD PRE-FILTER
- * Returns TRUE if the job should be REJECTED immediately.
- */
 function isSpamOrIrrelevant(title) {
     const lowerTitle = title.toLowerCase();
     return BANNED_ROLES.some(role => lowerTitle.includes(role));
 }
 
-/**
- * Scrapes job details from its webpage.
- */
 async function scrapeJobDetailsFromPage(mappedJob, siteConfig) {
     console.log(`[${siteConfig.siteName}] Visiting job page: ${mappedJob.ApplicationURL}`);
     const pageController = new AbortController();
@@ -56,16 +48,27 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // 1. Config Pre-Filter
     if (siteConfig.preFilter && !siteConfig.preFilter(rawJob)) return null;
 
-    let mappedJob = siteConfig.mapper(rawJob);
+    // Extract job data
+    let mappedJob;
+    if (siteConfig.extractJobID) {
+        mappedJob = {
+            JobID: siteConfig.extractJobID(rawJob),
+            JobTitle: siteConfig.extractJobTitle(rawJob),
+            Company: siteConfig.extractCompany(rawJob),
+            Location: siteConfig.extractLocation(rawJob),
+            Description: siteConfig.extractDescription(rawJob),
+            ApplicationURL: siteConfig.extractURL(rawJob),
+            DatePosted: siteConfig.extractPostedDate ? siteConfig.extractPostedDate(rawJob) : new Date().toISOString(),
+        };
+    } else {
+        mappedJob = siteConfig.mapper(rawJob);
+    }
 
-    // 2. Duplicate Check (Crucial for saving tokens)
-    // This checks ALL jobs in DB, including 'rejected' ones.
+    // 2. Duplicate Check
     if (!mappedJob.JobID || existingIDs.has(mappedJob.JobID)) {
         return null;
     }
 
-    // ✅ ANALYTICS 1: New Unique Job Data Fetched
-    // We count it here because it passed the duplicate check (it's new data)
     await Analytics.increment('jobsScraped');
 
     // 3. Title Filter
@@ -82,18 +85,15 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     
     // 5. Get Description
     if ((siteConfig.needsDescriptionScraping && !mappedJob.Description)) {
-        // ✅ NEW: Check if config has custom getDetails function (for Workday APIs like Covestro)
         if (typeof siteConfig.getDetails === 'function') {
             try {
                 const details = await siteConfig.getDetails(rawJob, sessionHeaders);
                 
-                // ✅ Handle skip flag
                 if (details && details.skip) {
                     console.log(`[${siteConfig.siteName}] Job skipped by getDetails`);
                     return null;
                 }
                 
-                // ✅ Merge details into mapped job
                 if (details) {
                     Object.assign(mappedJob, details);
                 }
@@ -102,38 +102,27 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
                 return null;
             }
         } else {
-            // ✅ FALLBACK: Use generic HTML scraper
             mappedJob = await scrapeJobDetailsFromPage(mappedJob, siteConfig);
         }
     }
     
     if (!mappedJob.Description) return null;
 
-    // ✅ ANALYTICS 2: Sent to AI
-    // It passed all filters and is about to cost money/tokens
     await Analytics.increment('jobsSentToAI');
 
-    // 6. 🧠 AI CLASSIFICATION (GERMAN & LOCATION ONLY - NO ENGLISH CHECK)
-    const aiResult = await analyzeJobWithGroq(mappedJob.JobTitle, mappedJob.Description, mappedJob.Location);
+    // ✅ 6. AI CLASSIFICATION - GERMAN ONLY (NO LOCATION CHECK)
+    const aiResult = await analyzeJobWithGroq(mappedJob.JobTitle, mappedJob.Description);
 
     if (!aiResult) {
         console.log(`[AI] Failed to analyze ${mappedJob.JobTitle}. Skipping.`);
         return null;
     }
 
-    // ✅ 7. STRICT FILTERING LOGIC - RETURN NULL FOR INVALID JOBS
-    // Only save jobs that meet ALL criteria:
-    // - Location must be Germany
-    // - German must NOT be required
-    
+    // ✅ 7. FILTERING LOGIC - ONLY CHECK GERMAN REQUIREMENT
     let finalDecision = "accepted";
     let rejectionReason = null;
     
-    if (aiResult.location_classification !== "Germany") {
-        finalDecision = "rejected";
-        rejectionReason = "Location not in Germany";
-        console.log(`❌ [Rejected - Not Germany] ${mappedJob.JobTitle} (Location: ${aiResult.location_classification})`);
-    } else if (aiResult.german_required === true) {
+    if (aiResult.german_required === true) {
         finalDecision = "rejected";
         rejectionReason = "German language required";
         console.log(`❌ [Rejected - German Required] ${mappedJob.JobTitle}`);
@@ -141,17 +130,16 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
         console.log(`✅ [Valid Job] ${mappedJob.JobTitle} (Confidence: ${aiResult.confidence})`);
     }
     
-    // ✅ 8. SAVE TO TEST LOG (ALL JOBS - ACCEPTED + REJECTED)
+    // ✅ 8. SAVE TO TEST LOG
     const testLogData = {
         ...mappedJob,
         GermanRequired: aiResult.german_required,
-        LocationClassification: aiResult.location_classification,
         Domain: aiResult.domain,
         SubDomain: aiResult.sub_domain,
         ConfidenceScore: aiResult.confidence,
-        Evidence: aiResult.evidence, // ✅ NEW: AI reasoning (no english_reason)
-        FinalDecision: finalDecision, // ✅ NEW: "accepted" or "rejected"
-        RejectionReason: rejectionReason, // ✅ NEW: Why rejected
+        Evidence: aiResult.evidence,  // ✅ Only contains german_reason
+        FinalDecision: finalDecision,
+        RejectionReason: rejectionReason,
         Status: finalDecision === "accepted" ? "pending_review" : "rejected"
     };
     
@@ -159,22 +147,19 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     await saveJobTestLog(jobTestLog);
     console.log(`📝 [Test Log] Saved ${finalDecision} job: ${mappedJob.JobTitle}`);
     
-    // ✅ 9. RETURN NULL IF REJECTED (don't save to main jobs collection)
+    // ✅ 9. RETURN NULL IF REJECTED
     if (finalDecision === "rejected") {
-        return null; // ✅ DO NOT SAVE TO MAIN COLLECTION
+        return null;
     }
 
-    // If we reach here, job is valid and accepted!
-    // ✅ ANALYTICS 3: Valid job found
     await Analytics.increment('jobsPendingReview');
 
-    // 10. Create Model with all AI metadata (for main collection) - NO EnglishSpeaking field
+    // 10. Create Model
     mappedJob.GermanRequired = aiResult.german_required;
-    mappedJob.LocationClassification = aiResult.location_classification;
     mappedJob.Domain = aiResult.domain;
     mappedJob.SubDomain = aiResult.sub_domain;
     mappedJob.ConfidenceScore = aiResult.confidence;
-    mappedJob.Status = "pending_review"; // All valid jobs go to review queue
+    mappedJob.Status = "pending_review";
 
     return createJobModel(mappedJob, siteConfig.siteName);
 }
