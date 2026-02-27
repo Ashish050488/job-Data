@@ -24,15 +24,17 @@ import { auto1GroupConfig } from './CompanyConfig/auto1GroupConfig.js';
 import { sixtConfig } from './CompanyConfig/sixtConfig.js';
 import { greenhouseConfig } from './CompanyConfig/greenhouseConfig.js';
 import { ashbyConfig } from './CompanyConfig/ashbyConfig.js';
+import { leverConfig } from './CompanyConfig/leverConfig.js';
 
 export const SITES_CONFIG = [
 
 
 
   // --------------------------------------
-  greenhouseConfig,
-  ashbyConfig,
+  // greenhouseConfig,
+  // ashbyConfig,
 
+leverConfig 
 
 
 
