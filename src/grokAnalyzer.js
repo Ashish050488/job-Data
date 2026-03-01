@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 import { GROQ_API_KEY } from './env.js';
-import { sleep } from './utils.js';
+import { sleep,StripHtml } from './utils.js';
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
@@ -20,238 +20,57 @@ const MAX_RETRIES = 5;
 export async function analyzeJobWithGroq(jobTitle, description) {
     if (!description || description.length < 50) return null;
 
-    const descriptionSnippet = description.substring(0, 4000);
+    const cleanDescription= StripHtml(description)
+    let descriptionSnippet;
+if (cleanDescription.length > 4000) {
+    const first = cleanDescription.substring(0, 1500);
+    const last = cleanDescription.slice(-2500);
+    descriptionSnippet = first + "\n...\n" + last;
+} else {
+    descriptionSnippet = cleanDescription;
+}
 
-    const prompt = `
-You are a strict evidence-only classifier for German language requirements.
-You MUST NOT infer anything that is not explicitly stated in the provided text.
+const prompt = `
+Does this job REQUIRE German language skills? Look ONLY at the DESCRIPTION text below.
+If ANY pattern from the REQUIRED list appears in the description, you MUST return german_required: true. Do not overthink or second-guess a match.
 
-JOB TITLE: "${jobTitle}"
-DESCRIPTION: "${descriptionSnippet}..."
+REQUIRED (return true):
+- "Fluent in German" or "Fluency in German" in requirements
+- "German native speaker" or "Native German"
+- "German (mandatory)" or "German (required)"
+- "German required" or "must speak German"
+- "Professional fluency in German" or "Business-level German"
+- "German B1/B2/C1/C2" level mentioned
+- "Bilingual" with German and English
+- "Fließend Deutsch" or "Deutschkenntnisse erforderlich"
+- "Native-level proficiency" or "near-native proficiency" in German
+- "Native or professional proficiency" in German context
+- "deutschsprachig" or "German-speaking" as requirement
+- "proficiency in German" in requirements section
+- Description is written entirely in German language
 
---- 🚨 ABSOLUTE RULES (CRITICAL) ---
+NOT REQUIRED (return false):
+- "German is a plus" or "nice to have" or "von Vorteil"
+- "wünschenswert" or "beneficial" or "runden dein Profil ab"
+- German not mentioned at all
+- Job is LOCATED in Germany but does not require German language skills
+- "must reside in Germany" is about location, NOT language
 
-1) Do NOT use the language of the description (English/German) as evidence for german_required.
-2) Only mark a field TRUE if there is EXPLICIT proof in the text.
-3) If explicit proof is missing, mark the field FALSE.
-4) Evidence MUST contain EXACT QUOTES from DESCRIPTION with "double quotes"
-5) If you cannot find a quote, write: "No explicit statement found in DESCRIPTION."
+DESCRIPTION: "${descriptionSnippet}"
 
---- GERMAN REQUIRED (german_required boolean) ---
-
-Set german_required = TRUE if you find ANY of these patterns:
-
-🔴 **PATTERN GROUP 1: EXPLICIT REQUIREMENT KEYWORDS**
-
-A) English Keywords:
-   - "German required"
-   - "German skills required"  
-   - "German language skills (required)" ← Notice (required) in parentheses!
-   - "German (required)"
-   - "must speak German"
-   - "must have German"
-   - "German is mandatory"
-   - "German is essential"
-   - "German is necessary"
-   - "German (mandatory)" ← Notice (mandatory) in parentheses!
-
-B) German Keywords:
-   - "Deutschkenntnisse erforderlich"
-   - "Deutsch erforderlich"
-   - "Deutsch notwendig"
-   - "Fließend Deutsch vorausgesetzt"
-   - "Deutsch zwingend"
-   - "Deutsche Sprache ist Pflicht"
-
-🔴 **PATTERN GROUP 2: FLUENCY = REQUIREMENT**
-
-🚨 CRITICAL: "Fluency" indicates REQUIREMENT, not optional skill!
-
-When job descriptions list skills in requirements section, "Fluency" means it's required.
-
-Mark TRUE if you find:
-   - "Fluency in German" (in requirements section)
-   - "Fluent in German" (in requirements section)
-   - "Fluent German" (in requirements section)
-   - "German fluency"
-   - "Fluent German language skills"
-   - "Fließend Deutsch"
-   - "Fließende Deutschkenntnisse"
-
-🚨 CONTEXT MATTERS:
-   ✅ "Requirements: Fluency in German" → TRUE (in requirements list)
-   ✅ "You have: Fluency in German" → TRUE (in qualifications list)
-   ✅ "Minimum requirements: Fluent German" → TRUE (in requirements)
-   ❌ "Fluency in German would be nice" → FALSE (explicitly optional)
-   ❌ "Fluency in German is a plus" → FALSE (explicitly optional)
-
-🔴 **PATTERN GROUP 3: PROFESSIONAL FLUENCY**
-
-Mark TRUE if you find:
-   - "Professional fluency in German"
-   - "High professional fluency in German"
-   - "Business fluency in German"
-   - "Business-level German"
-   - "Professionelles Deutsch"
-
-🔴 **PATTERN GROUP 4: NATIVE SPEAKER**
-
-Mark TRUE if you find:
-   - "German native speaker"
-   - "Native German speaker"
-   - "Native-level German"
-   - "German (native)"
-   - "Muttersprachler Deutsch"
-   - "Deutsch Muttersprachler"
-
-🔴 **PATTERN GROUP 5: LANGUAGE LEVELS (CEFR)**
-
-Mark TRUE if you find specific levels:
-   - "German B1", "German B2", "German C1", "German C2"
-   - "Deutsch B1/B2/C1/C2"
-   - "German (B2)", "German (C1)"
-   - "Mindestens B2 Deutsch"
-   - "At least B2 German"
-   - "Minimum B2 German"
-
-🔴 **PATTERN GROUP 6: WORKING LANGUAGE**
-
-Mark TRUE if you find:
-   - "German is the working language"
-   - "Deutsch als Arbeitssprache"
-   - "German is the business language"
-   - "Arbeitssprache Deutsch"
-   - "German-speaking environment"
-
-🔴 **PATTERN GROUP 7: BILINGUAL REQUIREMENTS**
-
-Mark TRUE if you find:
-   - "Bilingual: Fluent in both English and German"
-   - "Bilingual (German/English)"
-   - "German and English required"
-   - "German/English bilingual"
-
----
-
-Set german_required = FALSE ONLY if:
-
-❌ Optional keywords present:
-   - "von Vorteil" (advantageous)
-   - "wünschenswert" (desirable)
-   - "nice to have"
-   - "a plus"
-   - "beneficial"
-   - "would be nice"
-   - "is a plus"
-
-❌ Polite/soft phrasing (not explicit requirement):
-   - "runden dein Profil ab" (rounds out your profile)
-   - "abrunden" (round out)
-   - "ergänzen" (complement)
-
-❌ No mention:
-   - German is not mentioned anywhere
-
-🚨 **CRITICAL DECISION TREE:**
-
-1. Does text contain "(mandatory)" or "(required)" after German?
-   → YES = TRUE
-
-2. Does text say "Fluency in German" or "Fluent in German" in a requirements/qualifications list?
-   → YES = TRUE (unless explicitly marked "nice to have" or "plus")
-
-3. Does text say "German native speaker" or "Native German"?
-   → YES = TRUE
-
-4. Does text say "professional fluency" or "business fluency" in German?
-   → YES = TRUE
-
-5. Does text specify CEFR level (B1, B2, C1, C2)?
-   → YES = TRUE
-
-6. Does text say "bilingual" with German and English?
-   → YES = TRUE
-
-7. Does text say "German" with any of: mandatory, required, essential, necessary, must?
-   → YES = TRUE
-
-8. Does text say German is "a plus", "nice to have", "wünschenswert"?
-   → NO = FALSE
-
-9. Is German not mentioned at all?
-   → NO = FALSE
-
----
-
-🚨 **REAL EXAMPLES FROM YOUR DATA:**
-
-✅ MARK TRUE:
-- "Fluency in English & German (mandatory)" → TRUE (has (mandatory))
-- "German native speaker with fluent business English" → TRUE (has "native speaker")
-- "High professional fluency in German and English" → TRUE (has "professional fluency")
-- "Fluent German language skills (required)" → TRUE (has (required))
-- "Fluency in German" (in requirements section) → TRUE (fluency = requirement)
-- "Bilingual: Fluent in both English and German" → TRUE (bilingual requirement)
-- "German (B2)" → TRUE (has level specification)
-
-❌ MARK FALSE:
-- "Sehr gute Deutschkenntnisse runden dein Profil ab" → FALSE (only "runden ab")
-- "German is a plus" → FALSE (explicitly optional)
-- "Deutschkenntnisse wünschenswert" → FALSE (optional keyword)
-- No mention of German → FALSE
-
---- DOMAIN & SUB-DOMAIN ---
-
-Domain:
+Now classify the domain using this job title: "${jobTitle}"
 - "Technical": Software, Data, AI, DevOps, Engineering, IT
 - "Non-Technical": Product, Marketing, Sales, HR, Finance
 - "Unclear": If ambiguous
 
-Sub-domain: Specific (e.g., "Sales", "Marketing", "Backend", "DevOps")
-
---- CONFIDENCE SCORE (0.0 - 1.0) ---
-
-High confidence (0.90-0.95):
-- Clear evidence with explicit keyword
-
-Medium confidence (0.70-0.85):
-- Context suggests requirement but keyword not perfect
-
-Low confidence (0.50-0.65):
-- Unclear or ambiguous
-
---- EVIDENCE FORMAT ---
-
-For german_reason, provide:
-1. WHERE (DESCRIPTION)
-2. EXACT QUOTE in "double quotes"
-3. Brief explanation
-
-Examples:
-
-✅ Good evidence (required):
-"DESCRIPTION contains: 'Fluency in English & German (mandatory)'. The word '(mandatory)' explicitly indicates German is required."
-
-"DESCRIPTION contains: 'German native speaker'. This explicitly requires native-level German proficiency."
-
-"DESCRIPTION contains: 'High professional fluency in German and English'. Professional fluency indicates required skill level."
-
-"DESCRIPTION contains: 'Fluency in German' listed in minimum requirements section. Fluency in a requirements list indicates it is required."
-
-❌ Bad evidence (don't do this):
-"German is working language" ← Not exact quote!
-"Job prefers German" ← Assumption!
-
---- OUTPUT FORMAT ---
-
-Return ONLY valid JSON:
+Return ONLY this JSON:
 {
-  "german_required": true | false,
-  "domain": "String",
-  "sub_domain": "String",
-  "confidence": Number,
+  "german_required": true or false,
+  "domain": "Technical" or "Non-Technical",
+  "sub_domain": "specific area like Sales, Backend, Marketing",
+  "confidence": 0.0 to 1.0,
   "evidence": {
-    "german_reason": "2-3 sentences with EXACT quotes"
+    "german_reason": "quote the exact text that proves your answer"
   }
 }
 `;
@@ -264,7 +83,7 @@ Return ONLY valid JSON:
                     { role: "user", content: prompt }
                 ],
                 model: MODEL_NAME,
-                temperature: 0.1, 
+                temperature: 0, 
                 response_format: { type: "json_object" } 
             });
 

@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import {StripHtml} from '../utils.js'
 
 export const ashbyConfig = {
     siteName: "Ashby Jobs",
@@ -262,12 +263,12 @@ export const ashbyConfig = {
     // Extract description
     extractDescription(job) {
         // Prefer plain text, fallback to HTML
-        return job.descriptionPlain || job.descriptionHtml || '';
+        return StripHtml(job.descriptionPlain || job.descriptionHtml || '');
     },
     
     // Extract URL
     extractURL(job) {
-        return job.applyUrl || job.jobUrl;
+        return job.jobUrl || job.applyUrl ;
     },
     
     // Extract posted date

@@ -3,9 +3,11 @@ import he from 'he';
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export function StripHtml(html) {
-    if (!html) return "";
-    const decodedHtml = he.decode(html);
-    return decodedHtml.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        if (!html) return "";
+    const stripped = he.decode(html).replace(/<[^>]+>/g, "");
+    const clean = he.decode(stripped).replace(/\s+/g, " ").trim();
+    return clean;
+
 }
 
 // Banned Roles (Noise Filter) - Keep this strict

@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import {StripHtml} from '../utils.js';
 
 export const greenhouseConfig = {
     siteName: "Greenhouse Jobs",
@@ -187,7 +188,7 @@ export const greenhouseConfig = {
     
     // Extract description
     extractDescription(job) {
-        return job.content || '';
+        return StripHtml(job.content || '');
     },
     
     // Extract URL

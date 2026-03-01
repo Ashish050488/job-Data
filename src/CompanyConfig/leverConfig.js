@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import {StripHtml} from '../utils.js'
 
 /**
  * LEVER CONFIGURATION - EXPANDED VERSION
@@ -274,11 +275,11 @@ const leverConfig = {
    */
   extractDescription: (job) => {
     if (job.descriptionPlain) {
-      return job.descriptionPlain;
+      return StripHtml(job.descriptionPlain);
     }
     
     if (job.description) {
-      return job.description.replace(/<[^>]*>/g, '').trim();
+      return StripHtml(job.description)
     }
     
     return 'No description available';
@@ -288,12 +289,12 @@ const leverConfig = {
    * Extract URL
    */
   extractURL: (job) => {
-    if (job.applyUrl) {
-      return job.applyUrl;
-    }
-    
     if (job.hostedUrl) {
       return job.hostedUrl;
+    }
+    
+    if (job.applyUrl) {
+      return job.applyUrl;
     }
     
     return null;
