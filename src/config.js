@@ -12,8 +12,8 @@ export const SITES_CONFIG = [
 
 
   // --------------------------------------
-  // greenhouseConfig,
-  // ashbyConfig,
+  greenhouseConfig,
+  ashbyConfig,
 leverConfig 
 
 
