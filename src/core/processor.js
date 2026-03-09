@@ -58,7 +58,7 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
             Location: siteConfig.extractLocation(rawJob),
             Description: siteConfig.extractDescription(rawJob),
             ApplicationURL: siteConfig.extractURL(rawJob),
-            DatePosted: siteConfig.extractPostedDate ? siteConfig.extractPostedDate(rawJob) : new Date().toISOString(),
+            PostedDate: siteConfig.extractPostedDate ? siteConfig.extractPostedDate(rawJob) : new Date().toISOString(),
         };
     } else {
         mappedJob = siteConfig.mapper(rawJob);
