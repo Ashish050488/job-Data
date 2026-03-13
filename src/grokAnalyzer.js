@@ -32,7 +32,7 @@ if (cleanDescription.length > 4000) {
 
 const prompt = `
 Does this job REQUIRE German language skills? Look ONLY at the DESCRIPTION text below.
-If ANY pattern from the REQUIRED list appears in the description, you MUST return german_required: true. Do not overthink or second-guess a match.
+If ANY pattern from the REQUIRED list appears in the description, you MUST return german_required: true. Do not overthink or second-guess a match. If you quote a German requirement in your evidence, you MUST return true.
 
 REQUIRED (return true):
 - "Fluent in German" or "Fluency in German" in requirements
@@ -48,6 +48,9 @@ REQUIRED (return true):
 - "deutschsprachig" or "German-speaking" as requirement
 - "proficiency in German" in requirements section
 - Description is written entirely in German language
+- Requirements section written in German (e.g. "Du sprichst fließend Deutsch")
+- "Exzellente Deutschkenntnisse" or "fließendes Deutsch" in any section
+- "Excellent communication in German and English" or similar phrasing
 
 NOT REQUIRED (return false):
 - "German is a plus" or "nice to have" or "von Vorteil"
