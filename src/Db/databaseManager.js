@@ -5,6 +5,7 @@ import { MONGO_URI } from '../env.js';
 import { SITES_CONFIG } from '../config.js';
 import { createUserModel } from '../models/userModel.js';
 import bcrypt from 'bcryptjs';
+import { StripHtml } from '../utils.js';
 
 export const client = new MongoClient(MONGO_URI);
 let db;
@@ -125,7 +126,6 @@ export async function findMatchingJobs(user) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ REMOVED: LocationClassification check
     const query = {
         Status: 'active',
         GermanRequired: false,
@@ -164,7 +164,6 @@ export async function addCuratedJob(jobData) {
     }
     const jobID = `curated-${new Date().getTime()}`;
     
-    // ✅ REMOVED: LocationClassification
     const jobToSave = createJobModel({
         JobID: jobID,
         JobTitle: jobData.JobTitle,
@@ -207,7 +206,6 @@ export async function getPublicBaitJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
     
-    // ✅ REMOVED: LocationClassification check
     const jobs = await jobsCollection.find({
         Status: 'active',
         GermanRequired: false
@@ -216,10 +214,10 @@ export async function getPublicBaitJobs() {
         .limit(9)
         .project({
             JobTitle: 1, Company: 1, Location: 1, Department: 1,
-            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1
+            PostedDate: 1, ApplicationURL: 1, GermanRequired: 1, thumbsUp: 1, thumbsDown: 1
         })
         .toArray();
-    return jobs;
+    return jobs.map(job => ({ ...job, thumbsUp: job.thumbsUp || 0, thumbsDown: job.thumbsDown || 0 }));
 }
 
 export async function addSubscriber(data) {
@@ -257,10 +255,8 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
     const jobsCollection = db.collection('jobs');
     const skip = (page - 1) * limit;
 
-    // ✅ REMOVED: LocationClassification check
     const query = {
         Status: 'active',
-        thumbStatus: { $ne: 'down' },
         GermanRequired: false
     };
 
@@ -277,15 +273,19 @@ export async function getJobsPaginated(page = 1, limit = 50, companyFilter = nul
 
     const companies = await jobsCollection.distinct('Company', { Status: 'active' });
 
-    return { jobs, totalJobs, companies };
+    const normalizedJobs = jobs.map(job => ({
+        ...job,
+        thumbsUp: job.thumbsUp || 0,
+        thumbsDown: job.thumbsDown || 0
+    }));
+
+    return { jobs: normalizedJobs, totalJobs, companies };
 }
 
 export async function getRejectedJobs() {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
-    return await jobsCollection.find({ 
-        $or: [{ Status: 'rejected' }, { thumbStatus: 'down' }] 
-    })
+    return await jobsCollection.find({ Status: 'rejected' })
         .sort({ updatedAt: -1 })
         .toArray();
 }
@@ -332,14 +332,57 @@ export async function reviewJobDecision(jobId, decision) {
     return { success: true, status: newStatus };
 }
 
-export async function updateJobFeedback(jobId, status) {
+export async function castJobVote(jobId, status, visitorId) {
     const db = await connectToDb();
     const jobsCollection = db.collection('jobs');
+    const votesCollection = db.collection('votes');
+
+    if (!ObjectId.isValid(jobId)) {
+        throw new Error('Invalid job id');
+    }
+    if (!['up', 'down'].includes(status)) {
+        throw new Error('Invalid vote status');
+    }
+    if (!visitorId || typeof visitorId !== 'string') {
+        throw new Error('visitorId is required');
+    }
+
+    const objectId = new ObjectId(jobId);
+    const existingVote = await votesCollection.findOne({ jobId: objectId, visitorId });
+
+    let userVote = null;
+    if (existingVote && existingVote.vote === status) {
+        await votesCollection.deleteOne({ _id: existingVote._id });
+    } else if (existingVote && existingVote.vote !== status) {
+        await votesCollection.updateOne(
+            { _id: existingVote._id },
+            { $set: { vote: status, createdAt: new Date() } }
+        );
+        userVote = status;
+    } else {
+        await votesCollection.insertOne({
+            jobId: objectId,
+            visitorId,
+            vote: status,
+            createdAt: new Date()
+        });
+        userVote = status;
+    }
+
+    const voteCounts = await votesCollection.aggregate([
+        { $match: { jobId: objectId } },
+        { $group: { _id: '$vote', count: { $sum: 1 } } }
+    ]).toArray();
+
+    const thumbsUp = voteCounts.find(v => v._id === 'up')?.count || 0;
+    const thumbsDown = voteCounts.find(v => v._id === 'down')?.count || 0;
 
     await jobsCollection.updateOne(
-        { _id: new ObjectId(jobId) },
-        { $set: { thumbStatus: status, updatedAt: new Date() } }
+        { _id: objectId },
+        { $set: { thumbsUp, thumbsDown, updatedAt: new Date() } }
     );
+
+    return { thumbsUp, thumbsDown, userVote };
 }
 
 export async function getCompanyDirectoryStats() {
@@ -347,13 +390,10 @@ export async function getCompanyDirectoryStats() {
         const db = await connectToDb();
 
         const jobsCollection = db.collection('jobs');
-        
-        // ✅ REMOVED: LocationClassification check
         const pipeline = [
             { 
                 $match: { 
                     Status: 'active', 
-                    thumbStatus: { $ne: 'down' },
                     GermanRequired: false
                 } 
             },
@@ -377,23 +417,7 @@ export async function getCompanyDirectoryStats() {
             domain: stat._id.toLowerCase().replace(/[^a-z0-9-]/g, '') + ".com",
             source: 'scraped'
         }));
-
-        const manualCollection = db.collection('manual_companies');
-        const manualCompanies = await manualCollection.find({}).toArray();
-
-        const formattedManual = manualCompanies.map(c => ({
-            _id: c._id.toString(),
-            companyName: c.name,
-            openRoles: 0, 
-            cities: c.cities ? c.cities.split(',').map(s => s.trim()) : [],
-            domain: c.domain,
-            source: 'manual'
-        }));
-
-        const scrapedNames = new Set(formattedScraped.map(c => c.companyName.toLowerCase()));
-        const uniqueManual = formattedManual.filter(c => !scrapedNames.has(c.companyName.toLowerCase()));
-
-        return [...formattedScraped, ...uniqueManual];
+        return formattedScraped;
 
     } catch (error) {
         console.error("Stats: Aggregation failed:", error);
@@ -406,33 +430,96 @@ export async function findJobById(id) {
     return await db.collection('jobs').findOne({ _id: new ObjectId(id) });
 }
 
+export async function findJobByIdOrJobID(idOrJobID) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    if (ObjectId.isValid(idOrJobID)) {
+        const byObjectId = await jobsCollection.findOne({ _id: new ObjectId(idOrJobID) });
+        if (byObjectId) return byObjectId;
+    }
+
+    return await jobsCollection.findOne({ JobID: idOrJobID });
+}
+
+export async function getJobsEligibleForReanalysis() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    return await jobsCollection.find({
+        $or: [
+            { Status: 'pending_review' },
+            {
+                Status: 'rejected',
+                $or: [
+                    { reviewedAt: { $exists: false } },
+                    { reviewedAt: null }
+                ]
+            }
+        ]
+    }).toArray();
+}
+
+export async function countManuallyReviewedJobs() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    return await jobsCollection.countDocuments({
+        $or: [
+            { Status: 'active', reviewedAt: { $exists: true, $ne: null } },
+            { Status: 'rejected', reviewedAt: { $exists: true, $ne: null } }
+        ]
+    });
+}
+
+export async function updateJobAfterReanalysis(jobId, aiResult, status, rejectionReason) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    await jobsCollection.updateOne(
+        { _id: new ObjectId(jobId) },
+        {
+            $set: {
+                GermanRequired: aiResult.german_required,
+                Domain: aiResult.domain,
+                SubDomain: aiResult.sub_domain,
+                ConfidenceScore: aiResult.confidence,
+                Evidence: aiResult.evidence || { german_reason: '' },
+                Status: status,
+                RejectionReason: rejectionReason,
+                updatedAt: new Date()
+            }
+        }
+    );
+
+    return await jobsCollection.findOne({ _id: new ObjectId(jobId) });
+}
+
+export async function restoreRejectedJobToQueue(jobId) {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+
+    await jobsCollection.updateOne(
+        { _id: new ObjectId(jobId) },
+        {
+            $set: {
+                Status: 'pending_review',
+                RejectionReason: null,
+                updatedAt: new Date()
+            },
+            $unset: {
+                reviewedAt: ''
+            }
+        }
+    );
+}
+
 export async function deleteJobsByCompany(companyName) {
     const db = await connectToDb();
     console.log(`[Admin] Deleting all jobs for company: ${companyName}`);
     return await db.collection('jobs').deleteMany({
         Company: { $regex: new RegExp(`^${companyName}$`, 'i') }
     });
-}
-
-export async function addManualCompany(data) {
-    const db = await connectToDb();
-    const companiesCollection = db.collection('manual_companies');
-
-    const exists = await companiesCollection.findOne({
-        name: { $regex: new RegExp(`^${data.name}$`, 'i') }
-    });
-    if (exists) throw new Error("Company already exists in manual list.");
-
-    await companiesCollection.insertOne({
-        ...data,
-        createdAt: new Date()
-    });
-}
-
-export async function deleteManualCompany(id) {
-    const db = await connectToDb();
-    const companiesCollection = db.collection('manual_companies');
-    await companiesCollection.deleteOne({ _id: new ObjectId(id) });
 }
 
 export async function registerUser({ email, password, name, role = 'user', location, domain, isWaitlist }) {
@@ -496,4 +583,42 @@ export async function getUserProfile(userId) {
     const db = await connectToDb();
     const usersCollection = db.collection('users');
     return await usersCollection.findOne({ _id: new ObjectId(userId) }, { projection: { password: 0 } });
+}
+
+export async function cleanAllDescriptions() {
+    const db = await connectToDb();
+    const jobsCollection = db.collection('jobs');
+    const logsCollection = db.collection('jobTestLogs');
+
+    let total = 0;
+    let cleaned = 0;
+
+    const cleanInCollection = async (collection) => {
+        const cursor = collection.find({}, { projection: { _id: 1, Description: 1 } });
+
+        while (await cursor.hasNext()) {
+            const document = await cursor.next();
+            total += 1;
+
+            const currentDescription = typeof document?.Description === 'string' ? document.Description : '';
+            const nextDescription = StripHtml(currentDescription);
+
+            if (nextDescription !== currentDescription) {
+                await collection.updateOne(
+                    { _id: document._id },
+                    { $set: { Description: nextDescription, updatedAt: new Date() } }
+                );
+                cleaned += 1;
+            }
+        }
+    };
+
+    await cleanInCollection(jobsCollection);
+    await cleanInCollection(logsCollection);
+
+    return {
+        total,
+        cleaned,
+        alreadyClean: total - cleaned
+    };
 }

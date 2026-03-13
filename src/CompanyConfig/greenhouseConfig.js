@@ -1,6 +1,86 @@
 import fetch from 'node-fetch';
 import {StripHtml} from '../utils.js';
 
+function normalizeArray(values) {
+    return [...new Set((values || []).filter(Boolean).map(v => String(v).trim()).filter(Boolean))];
+}
+
+function metadataToObject(metadata) {
+    if (!metadata) return {};
+    if (Array.isArray(metadata)) {
+        const result = {};
+        for (const item of metadata) {
+            if (!item?.name) continue;
+            result[item.name] = item.value;
+        }
+        return result;
+    }
+    if (typeof metadata === 'object') return metadata;
+    return {};
+}
+
+function findMetadataValue(metadataObj, keywords = []) {
+    const entries = Object.entries(metadataObj || {});
+    for (const [key, value] of entries) {
+        const lowered = key.toLowerCase();
+        if (keywords.some(keyword => lowered.includes(keyword))) {
+            return value;
+        }
+    }
+    return null;
+}
+
+function normalizeWorkplaceType(value) {
+    if (!value) return 'Unspecified';
+    const lower = String(value).toLowerCase();
+    if (lower.includes('remote')) return 'Remote';
+    if (lower.includes('hybrid')) return 'Hybrid';
+    if (lower.includes('onsite') || lower.includes('on-site') || lower.includes('office')) return 'Onsite';
+    return 'Unspecified';
+}
+
+function inferEmploymentType(value) {
+    if (!value) return null;
+    const lower = String(value).toLowerCase();
+    if (lower.includes('full')) return 'FullTime';
+    if (lower.includes('part')) return 'PartTime';
+    if (lower.includes('intern')) return 'Intern';
+    if (lower.includes('temp')) return 'Temporary';
+    if (lower.includes('contract')) return 'Contract';
+    return null;
+}
+
+function parseSalaryFromText(text) {
+    if (!text) return {};
+    const cleaned = StripHtml(text).replace(/\./g, '').replace(/,/g, '.');
+
+    const currencyMatch = cleaned.match(/(USD|EUR|GBP|CHF|CAD|AUD|JPY|SEK|NOK|DKK|PLN)/i);
+    const symbolMatch = cleaned.match(/[€$£]/);
+    const rangeMatch = cleaned.match(/(\d{2,7}(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d{2,7}(?:\.\d+)?)/i);
+
+    let salaryCurrency = null;
+    if (currencyMatch) {
+        salaryCurrency = currencyMatch[1].toUpperCase();
+    } else if (symbolMatch) {
+        if (symbolMatch[0] === '€') salaryCurrency = 'EUR';
+        if (symbolMatch[0] === '$') salaryCurrency = 'USD';
+        if (symbolMatch[0] === '£') salaryCurrency = 'GBP';
+    }
+
+    let salaryInterval = null;
+    const lower = cleaned.toLowerCase();
+    if (lower.includes('per hour') || lower.includes('/hour') || lower.includes('hourly')) salaryInterval = 'per-hour-wage';
+    if (lower.includes('per month') || lower.includes('/month') || lower.includes('monthly')) salaryInterval = 'per-month-salary';
+    if (lower.includes('per year') || lower.includes('/year') || lower.includes('annual') || lower.includes('yearly')) salaryInterval = 'per-year-salary';
+
+    return {
+        SalaryMin: rangeMatch ? Number(rangeMatch[1]) : null,
+        SalaryMax: rangeMatch ? Number(rangeMatch[2]) : null,
+        SalaryCurrency: salaryCurrency,
+        SalaryInterval: salaryInterval
+    };
+}
+
 export const greenhouseConfig = {
     siteName: "Greenhouse Jobs",
     baseUrl: "https://boards-api.greenhouse.io/v1/boards",
@@ -199,6 +279,107 @@ export const greenhouseConfig = {
     // Extract posted date
     extractPostedDate(job) {
         return job.updated_at;
+    },
+
+    extractDepartment(job) {
+        const fromDepartments = Array.isArray(job.departments) && job.departments.length > 0 ? job.departments[0]?.name : null;
+        if (fromDepartments) return fromDepartments;
+        const metadata = metadataToObject(job.metadata);
+        return findMetadataValue(metadata, ['department', 'team']) || 'N/A';
+    },
+
+    extractTeam(job) {
+        const metadata = metadataToObject(job.metadata);
+        return findMetadataValue(metadata, ['team']) || null;
+    },
+
+    extractOffice(job) {
+        return Array.isArray(job.offices) && job.offices.length > 0 ? job.offices[0]?.name || null : null;
+    },
+
+    extractAllLocations(job) {
+        const officeLocations = (job.offices || []).map(office => office?.location).filter(Boolean);
+        return normalizeArray([job.location?.name, ...officeLocations]);
+    },
+
+    extractCountry(job) {
+        const allLocations = this.extractAllLocations(job).join(' ').toLowerCase();
+        if (allLocations.includes('germany') || allLocations.includes('deutschland')) return 'DE';
+        return null;
+    },
+
+    extractEmploymentType(job) {
+        const metadata = metadataToObject(job.metadata);
+        const value = findMetadataValue(metadata, ['employment', 'contract', 'time']);
+        return inferEmploymentType(value);
+    },
+
+    extractWorkplaceType(job) {
+        const location = `${job.location?.name || ''} ${(job.offices || []).map(o => o?.location).join(' ')}`;
+        return normalizeWorkplaceType(location);
+    },
+
+    extractIsRemote(job) {
+        const workplace = this.extractWorkplaceType(job);
+        return workplace === 'Remote' || workplace === 'Hybrid';
+    },
+
+    extractTags(job) {
+        const metadata = metadataToObject(job.metadata);
+        const tags = [];
+        for (const [key, value] of Object.entries(metadata)) {
+            if (!value) continue;
+            if (Array.isArray(value)) {
+                tags.push(...value.map(v => `${key}:${v}`));
+            } else {
+                tags.push(`${key}:${value}`);
+            }
+        }
+        return normalizeArray(tags);
+    },
+
+    extractDirectApplyURL() {
+        return null;
+    },
+
+    extractSalaryCurrency(job) {
+        const fromContent = parseSalaryFromText(job.content || '');
+        if (fromContent.SalaryCurrency) return fromContent.SalaryCurrency;
+        const metadata = metadataToObject(job.metadata);
+        return findMetadataValue(metadata, ['currency']) || null;
+    },
+
+    extractSalaryMin(job) {
+        const fromContent = parseSalaryFromText(job.content || '');
+        if (Number.isFinite(fromContent.SalaryMin)) return fromContent.SalaryMin;
+        const metadata = metadataToObject(job.metadata);
+        const val = Number(findMetadataValue(metadata, ['salary min', 'min salary', 'minimum salary', 'comp min']));
+        return Number.isFinite(val) ? val : null;
+    },
+
+    extractSalaryMax(job) {
+        const fromContent = parseSalaryFromText(job.content || '');
+        if (Number.isFinite(fromContent.SalaryMax)) return fromContent.SalaryMax;
+        const metadata = metadataToObject(job.metadata);
+        const val = Number(findMetadataValue(metadata, ['salary max', 'max salary', 'maximum salary', 'comp max']));
+        return Number.isFinite(val) ? val : null;
+    },
+
+    extractSalaryInterval(job) {
+        const fromContent = parseSalaryFromText(job.content || '');
+        if (fromContent.SalaryInterval) return fromContent.SalaryInterval;
+        const metadata = metadataToObject(job.metadata);
+        const raw = findMetadataValue(metadata, ['salary interval', 'interval']);
+        if (!raw) return null;
+        const lower = String(raw).toLowerCase();
+        if (lower.includes('hour')) return 'per-hour-wage';
+        if (lower.includes('month')) return 'per-month-salary';
+        if (lower.includes('year')) return 'per-year-salary';
+        return null;
+    },
+
+    extractATSPlatform() {
+        return 'greenhouse';
     },
     
     // Check if location is in Germany

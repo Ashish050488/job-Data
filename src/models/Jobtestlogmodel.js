@@ -1,26 +1,19 @@
-/**
- * Job Test Log Model
- * Saves ALL jobs (accepted + rejected) for testing and analysis
- * Includes AI evidence/reasoning for decisions
- * NO LOCATION CLASSIFICATION - All jobs assumed to be in Germany
- */
-
 const jobTestLogSchemaDefinition = {
     JobID: { type: String, required: true },
     sourceSite: { type: String, required: true },
     JobTitle: { type: String, required: true, trim: true },
     ApplicationURL: { type: String, required: true },
+    DirectApplyURL: { type: String, default: null },
     Description: { type: String, default: "" },
-    Location: { type: String, default: "N/A" }, // ✅ Raw location from source (not classified)
+    Location: { type: String, default: "N/A" },
     Company: { type: String, default: "N/A" },
+    ATSPlatform: { type: String, default: "N/A" },
     
-    // --- CLASSIFICATION FIELDS ---
     GermanRequired: { type: Boolean, default: false },
     Domain: { type: String, default: "Unclear" },
     SubDomain: { type: String, default: "Other" },
     ConfidenceScore: { type: Number, default: 0 },
     
-    // --- AI EVIDENCE (GERMAN ONLY) ---
     Evidence: {
         type: Object,
         default: {
@@ -28,14 +21,25 @@ const jobTestLogSchemaDefinition = {
         }
     },
     
-    // --- FINAL DECISION ---
-    FinalDecision: { type: String, default: "rejected" }, // "accepted" or "rejected"
+    FinalDecision: { type: String, default: "rejected" },
     RejectionReason: { type: String, default: null },
     
-    // --- WORKFLOW STATUS ---
     Status: { type: String, default: "pending_review" },
     
     Department: { type: String, default: "N/A" },
+    Team: { type: String, default: null },
+    Office: { type: String, default: null },
+    WorkplaceType: { type: String, default: "Unspecified" },
+    EmploymentType: { type: String, default: null },
+    IsRemote: { type: Boolean, default: false },
+    Country: { type: String, default: null },
+    AllLocations: { type: Array, default: [] },
+    Tags: { type: Array, default: [] },
+    SalaryCurrency: { type: String, default: null },
+    SalaryMin: { type: Number, default: null },
+    SalaryMax: { type: Number, default: null },
+    SalaryInterval: { type: String, default: null },
+    isEntryLevel: { type: Boolean, default: false },
     ContractType: { type: String, default: "N/A" },
     ExperienceLevel: { type: String, default: "N/A" },
     PostedDate: { type: Date, default: null },
@@ -71,6 +75,8 @@ class JobTestLog {
                     this[key] = new Date(value);
                 } else if (schemaField.type === Object) {
                     this[key] = value;
+                } else if (schemaField.type === Array) {
+                    this[key] = Array.isArray(value) ? value : schemaField.default;
                 } else {
                     this[key] = value;
                 }
@@ -85,23 +91,38 @@ export function createJobTestLog(jobData, sourceSite) {
         sourceSite: sourceSite,
         JobTitle: jobData.JobTitle,
         Company: jobData.Company,
-        Location: jobData.Location, // ✅ Raw location (e.g., "Berlin", "Munich, Hamburg")
+        Location: jobData.Location,
         Description: jobData.Description,
         ApplicationURL: jobData.ApplicationURL,
+        DirectApplyURL: jobData.DirectApplyURL || null,
+        ATSPlatform: jobData.ATSPlatform || null,
         PostedDate: jobData.PostedDate || jobData.DatePosted || null,
+        Department: jobData.Department || "N/A",
+        Team: jobData.Team || null,
+        Office: jobData.Office || null,
+        WorkplaceType: jobData.WorkplaceType || "Unspecified",
+        EmploymentType: jobData.EmploymentType || null,
+        IsRemote: Boolean(jobData.IsRemote),
+        Country: jobData.Country || null,
+        AllLocations: Array.isArray(jobData.AllLocations) ? jobData.AllLocations : [],
+        Tags: Array.isArray(jobData.Tags) ? jobData.Tags : [],
+        SalaryCurrency: jobData.SalaryCurrency || null,
+        SalaryMin: jobData.SalaryMin ?? null,
+        SalaryMax: jobData.SalaryMax ?? null,
+        SalaryInterval: jobData.SalaryInterval || null,
+        isEntryLevel: Boolean(jobData.isEntryLevel),
+        ExperienceLevel: jobData.ExperienceLevel || "N/A",
+        ContractType: jobData.ContractType || "N/A",
         
-        // ✅ AI Classification Results (NO LOCATION CHECK)
         GermanRequired: jobData.GermanRequired,
         Domain: jobData.Domain || "N/A",
         SubDomain: jobData.SubDomain || "N/A",
         ConfidenceScore: jobData.ConfidenceScore || 0,
         
-        // ✅ Evidence (GERMAN ONLY - NO LOCATION REASON)
         Evidence: jobData.Evidence || {
             german_reason: ""
         },
         
-        // ✅ Decision Info
         FinalDecision: jobData.FinalDecision || "pending",
         RejectionReason: jobData.RejectionReason || null,
         Status: jobData.Status || "pending_review",

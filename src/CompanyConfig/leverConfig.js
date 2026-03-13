@@ -1,6 +1,34 @@
 import fetch from 'node-fetch';
 import {StripHtml} from '../utils.js'
 
+function normalizeArray(values) {
+  return [...new Set((values || []).filter(Boolean).map(v => String(v).trim()).filter(Boolean))];
+}
+
+function normalizeWorkplaceType(value) {
+  if (!value) return 'Unspecified';
+  const lower = String(value).toLowerCase();
+  if (lower === 'remote') return 'Remote';
+  if (lower === 'hybrid') return 'Hybrid';
+  if (lower === 'onsite' || lower === 'on-site') return 'Onsite';
+  if (lower === 'unspecified') return 'Unspecified';
+  if (lower.includes('remote')) return 'Remote';
+  if (lower.includes('hybrid')) return 'Hybrid';
+  if (lower.includes('onsite') || lower.includes('on-site')) return 'Onsite';
+  return 'Unspecified';
+}
+
+function mapCommitmentToEmploymentType(value) {
+  if (!value) return null;
+  const lower = String(value).toLowerCase();
+  if (lower.includes('full')) return 'FullTime';
+  if (lower.includes('part')) return 'PartTime';
+  if (lower.includes('intern')) return 'Intern';
+  if (lower.includes('temp')) return 'Temporary';
+  if (lower.includes('contract')) return 'Contract';
+  return null;
+}
+
 /**
  * LEVER CONFIGURATION - EXPANDED VERSION
  * 
@@ -304,7 +332,72 @@ const leverConfig = {
    * Extract posting date
    */
   extractPostedDate: (job) => {
-    return null;
+    return job.createdAt || null;
+  },
+
+  extractDepartment: (job) => {
+    return job.categories?.department || 'N/A';
+  },
+
+  extractTeam: (job) => {
+    return job.categories?.team || null;
+  },
+
+  extractOffice: (job) => {
+    return job.categories?.location || null;
+  },
+
+  extractAllLocations: (job) => {
+    return normalizeArray(job.categories?.allLocations || []);
+  },
+
+  extractEmploymentType: (job) => {
+    return mapCommitmentToEmploymentType(job.categories?.commitment);
+  },
+
+  extractWorkplaceType: (job) => {
+    return normalizeWorkplaceType(job.workplaceType);
+  },
+
+  extractIsRemote: (job) => {
+    const workplace = normalizeWorkplaceType(job.workplaceType);
+    return workplace === 'Remote' || workplace === 'Hybrid';
+  },
+
+  extractCountry: (job) => {
+    if (!job.country) return null;
+    const country = String(job.country).trim();
+    if (country.length === 2) return country.toUpperCase();
+    if (country.toLowerCase() === 'germany' || country.toLowerCase() === 'deutschland') return 'DE';
+    return country;
+  },
+
+  extractTags: (job) => {
+    return Array.isArray(job.tags) ? job.tags : [];
+  },
+
+  extractDirectApplyURL: (job) => {
+    return job.applyUrl || null;
+  },
+
+  extractSalaryMin: (job) => {
+    return Number.isFinite(job.salaryRange?.min) ? job.salaryRange.min : null;
+  },
+
+  extractSalaryMax: (job) => {
+    return Number.isFinite(job.salaryRange?.max) ? job.salaryRange.max : null;
+  },
+
+  extractSalaryCurrency: (job) => {
+    return job.salaryRange?.currency || null;
+  },
+
+  extractSalaryInterval: (job) => {
+    return job.salaryRange?.interval || null;
+  },
+
+  extractATSPlatform: () => {
+    return 'lever';
   },
 };
 

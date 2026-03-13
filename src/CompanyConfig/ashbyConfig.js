@@ -1,6 +1,38 @@
 import fetch from 'node-fetch';
 import {StripHtml} from '../utils.js'
 
+function normalizeArray(values) {
+    return [...new Set((values || []).filter(Boolean).map(v => String(v).trim()).filter(Boolean))];
+}
+
+function normalizeWorkplaceType(value) {
+    if (!value) return 'Unspecified';
+    if (value === 'OnSite') return 'Onsite';
+    if (value === 'Remote') return 'Remote';
+    if (value === 'Hybrid') return 'Hybrid';
+    const lower = String(value).toLowerCase();
+    if (lower.includes('remote')) return 'Remote';
+    if (lower.includes('hybrid')) return 'Hybrid';
+    if (lower.includes('onsite') || lower.includes('on-site')) return 'Onsite';
+    return 'Unspecified';
+}
+
+function normalizeCountry(value) {
+    if (!value) return null;
+    const cleaned = String(value).trim();
+    const lower = cleaned.toLowerCase();
+    if (lower === 'germany' || lower === 'deutschland') return 'DE';
+    if (cleaned.length === 2) return cleaned.toUpperCase();
+    return cleaned;
+}
+
+function findCompensationComponent(job, typeName) {
+    const summaryComponents = job?.compensation?.summaryComponents || [];
+    const tierComponents = (job?.compensation?.compensationTiers || []).flatMap(tier => tier.components || []);
+    const all = [...summaryComponents, ...tierComponents];
+    return all.find(component => String(component?.compensationType || '').toLowerCase() === String(typeName).toLowerCase()) || null;
+}
+
 export const ashbyConfig = {
     siteName: "Ashby Jobs",
     baseUrl: "https://api.ashbyhq.com/posting-api/job-board",
@@ -74,7 +106,7 @@ export const ashbyConfig = {
         
         for (const boardName of this.companyBoardNames) {
             try {
-                const url = `${this.baseUrl}/${boardName}`;
+                const url = `${this.baseUrl}/${boardName}?includeCompensation=true`;
                 const response = await fetch(url);
                 
                 if (!response.ok) {
@@ -274,5 +306,78 @@ export const ashbyConfig = {
     // Extract posted date
     extractPostedDate(job) {
         return job.publishedAt;
+    },
+
+    extractDepartment(job) {
+        return job.department || 'N/A';
+    },
+
+    extractTeam(job) {
+        return job.team || null;
+    },
+
+    extractOffice(job) {
+        return job.location || null;
+    },
+
+    extractAllLocations(job) {
+        const secondaries = (job.secondaryLocations || []).map(sec => sec?.location).filter(Boolean);
+        return normalizeArray([job.location, ...secondaries]);
+    },
+
+    extractCountry(job) {
+        const primary = job?.address?.postalAddress?.addressCountry;
+        return normalizeCountry(primary);
+    },
+
+    extractEmploymentType(job) {
+        return job.employmentType || null;
+    },
+
+    extractWorkplaceType(job) {
+        return normalizeWorkplaceType(job.workplaceType);
+    },
+
+    extractIsRemote(job) {
+        if (typeof job.isRemote === 'boolean') return job.isRemote;
+        const workplace = normalizeWorkplaceType(job.workplaceType);
+        return workplace === 'Remote' || workplace === 'Hybrid';
+    },
+
+    extractTags(job) {
+        return normalizeArray([job.department, job.team, job.workplaceType, job.employmentType]);
+    },
+
+    extractDirectApplyURL(job) {
+        return job.applyUrl || null;
+    },
+
+    extractSalaryCurrency(job) {
+        const salary = findCompensationComponent(job, 'Salary');
+        return salary?.currencyCode || null;
+    },
+
+    extractSalaryMin(job) {
+        const salary = findCompensationComponent(job, 'Salary');
+        return Number.isFinite(salary?.minValue) ? salary.minValue : null;
+    },
+
+    extractSalaryMax(job) {
+        const salary = findCompensationComponent(job, 'Salary');
+        return Number.isFinite(salary?.maxValue) ? salary.maxValue : null;
+    },
+
+    extractSalaryInterval(job) {
+        const salary = findCompensationComponent(job, 'Salary');
+        if (!salary?.interval) return null;
+        const lower = String(salary.interval).toLowerCase();
+        if (lower.includes('year')) return 'per-year-salary';
+        if (lower.includes('month')) return 'per-month-salary';
+        if (lower.includes('hour')) return 'per-hour-wage';
+        return null;
+    },
+
+    extractATSPlatform() {
+        return 'ashby';
     }
 };

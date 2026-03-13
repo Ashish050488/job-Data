@@ -9,6 +9,34 @@ import { saveJobTestLog } from '../Db/databaseManager.js';
 import { Analytics } from '../models/analyticsModel.js';
 import { BANNED_ROLES } from '../utils.js';
 
+function normalizeArray(values) {
+    return Array.isArray(values)
+        ? [...new Set(values.filter(Boolean).map(value => String(value).trim()).filter(Boolean))]
+        : [];
+}
+
+function deriveExperienceLevelFromTitle(title) {
+    const lower = String(title || '').toLowerCase();
+    if (lower.includes('staff') || lower.includes('principal')) return 'Staff';
+    if (lower.includes('lead')) return 'Lead';
+    if (lower.includes('senior') || lower.includes('sr.')) return 'Senior';
+    if (lower.includes('junior') || lower.includes('entry') || lower.includes('associate') || lower.includes('graduate')) return 'Entry';
+    return 'Mid';
+}
+
+function deriveIsEntryLevelFromTitle(title) {
+    const lower = String(title || '').toLowerCase();
+    return ['junior', 'entry', 'associate', 'graduate'].some(keyword => lower.includes(keyword));
+}
+
+function inferAtsPlatform(siteConfig) {
+    const name = String(siteConfig?.siteName || '').toLowerCase();
+    if (name.includes('greenhouse')) return 'greenhouse';
+    if (name.includes('ashby')) return 'ashby';
+    if (name.includes('lever')) return 'lever';
+    return 'N/A';
+}
+
 function isSpamOrIrrelevant(title) {
     const lowerTitle = title.toLowerCase();
     return BANNED_ROLES.some(role => lowerTitle.includes(role));
@@ -51,17 +79,46 @@ export async function processJob(rawJob, siteConfig, existingIDs, sessionHeaders
     // Extract job data
     let mappedJob;
     if (siteConfig.extractJobID) {
+        const extractedTitle = siteConfig.extractJobTitle(rawJob);
+        const extractedExperience = siteConfig.extractExperienceLevel ? siteConfig.extractExperienceLevel(rawJob) : null;
+        const derivedExperience = extractedExperience || deriveExperienceLevelFromTitle(extractedTitle);
+        const extractedEntryLevel = siteConfig.extractIsEntryLevel ? siteConfig.extractIsEntryLevel(rawJob) : null;
+        const derivedEntryLevel = extractedEntryLevel ?? deriveIsEntryLevelFromTitle(extractedTitle);
+
         mappedJob = {
             JobID: siteConfig.extractJobID(rawJob),
-            JobTitle: siteConfig.extractJobTitle(rawJob),
+            JobTitle: extractedTitle,
             Company: siteConfig.extractCompany(rawJob),
             Location: siteConfig.extractLocation(rawJob),
             Description: siteConfig.extractDescription(rawJob),
             ApplicationURL: siteConfig.extractURL(rawJob),
             PostedDate: siteConfig.extractPostedDate ? siteConfig.extractPostedDate(rawJob) : new Date().toISOString(),
+            DirectApplyURL: siteConfig.extractDirectApplyURL ? siteConfig.extractDirectApplyURL(rawJob) : null,
+            ATSPlatform: siteConfig.extractATSPlatform ? siteConfig.extractATSPlatform(rawJob) : inferAtsPlatform(siteConfig),
+            SalaryCurrency: siteConfig.extractSalaryCurrency ? siteConfig.extractSalaryCurrency(rawJob) : null,
+            SalaryMin: siteConfig.extractSalaryMin ? siteConfig.extractSalaryMin(rawJob) : null,
+            SalaryMax: siteConfig.extractSalaryMax ? siteConfig.extractSalaryMax(rawJob) : null,
+            SalaryInterval: siteConfig.extractSalaryInterval ? siteConfig.extractSalaryInterval(rawJob) : null,
+            Department: siteConfig.extractDepartment ? siteConfig.extractDepartment(rawJob) : 'N/A',
+            Team: siteConfig.extractTeam ? siteConfig.extractTeam(rawJob) : null,
+            WorkplaceType: siteConfig.extractWorkplaceType ? siteConfig.extractWorkplaceType(rawJob) : 'Unspecified',
+            EmploymentType: siteConfig.extractEmploymentType ? siteConfig.extractEmploymentType(rawJob) : null,
+            IsRemote: siteConfig.extractIsRemote ? Boolean(siteConfig.extractIsRemote(rawJob)) : false,
+            Country: siteConfig.extractCountry ? siteConfig.extractCountry(rawJob) : null,
+            AllLocations: normalizeArray(siteConfig.extractAllLocations ? siteConfig.extractAllLocations(rawJob) : []),
+            Office: siteConfig.extractOffice ? siteConfig.extractOffice(rawJob) : null,
+            Tags: normalizeArray(siteConfig.extractTags ? siteConfig.extractTags(rawJob) : []),
+            isEntryLevel: Boolean(derivedEntryLevel),
+            ExperienceLevel: derivedExperience,
         };
     } else {
         mappedJob = siteConfig.mapper(rawJob);
+        const derivedExperience = mappedJob.ExperienceLevel || deriveExperienceLevelFromTitle(mappedJob.JobTitle);
+        mappedJob.ExperienceLevel = derivedExperience;
+        mappedJob.isEntryLevel = mappedJob.isEntryLevel ?? deriveIsEntryLevelFromTitle(mappedJob.JobTitle);
+        mappedJob.AllLocations = normalizeArray(mappedJob.AllLocations);
+        mappedJob.Tags = normalizeArray(mappedJob.Tags);
+        mappedJob.ATSPlatform = mappedJob.ATSPlatform || inferAtsPlatform(siteConfig);
     }
 
     // 2. Duplicate Check

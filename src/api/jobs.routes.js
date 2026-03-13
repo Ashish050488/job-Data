@@ -5,15 +5,19 @@ import {
     addCuratedJob,
     deleteJobById,
     getPublicBaitJobs,
-    updateJobFeedback,
+    castJobVote,
     getRejectedJobs,
     getCompanyDirectoryStats,
     getJobsForReview,
     reviewJobDecision,
     findJobById,
+    findJobByIdOrJobID,
+    getJobsEligibleForReanalysis,
+    countManuallyReviewedJobs,
+    updateJobAfterReanalysis,
+    restoreRejectedJobToQueue,
+    cleanAllDescriptions,
     deleteJobsByCompany,
-    addManualCompany,
-    deleteManualCompany,
     connectToDb
 } from '../Db/databaseManager.js';
 
@@ -22,6 +26,14 @@ import { analyzeJobWithGroq } from '../grokAnalyzer.js';
 import { verifyToken, verifyAdmin } from '../middleware/authMiddleware.js';
 
 export const jobsApiRouter = Router();
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function isManuallyReviewed(job) {
+    const reviewed = job?.reviewedAt !== undefined && job?.reviewedAt !== null;
+    if (!reviewed) return false;
+    return job?.Status === 'active' || job?.Status === 'rejected';
+}
 
 // ---------------------------------------------------------
 // PUBLIC ROUTES
@@ -96,9 +108,110 @@ jobsApiRouter.get('/rejected', async (req, res) => {
 jobsApiRouter.patch('/:id/feedback', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status } = req.body;
-        await updateJobFeedback(id, status);
-        res.status(200).json({ message: 'Feedback updated' });
+        const { status, visitorId } = req.body;
+
+        const result = await castJobVote(id, status, visitorId);
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+jobsApiRouter.post('/admin/reanalyze-all', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const jobs = await getJobsEligibleForReanalysis();
+        const skippedManualReview = await countManuallyReviewedJobs();
+
+        const summary = {
+            total: jobs.length,
+            reanalyzed: 0,
+            changedToRejected: 0,
+            changedToPending: 0,
+            skippedManualReview
+        };
+
+        for (let index = 0; index < jobs.length; index += 1) {
+            const job = jobs[index];
+
+            try {
+                const oldGermanRequired = Boolean(job.GermanRequired);
+                const aiResult = await analyzeJobWithGroq(job.JobTitle, job.Description);
+
+                if (!aiResult) {
+                    continue;
+                }
+
+                let nextStatus = job.Status || 'pending_review';
+                let rejectionReason = job.RejectionReason || null;
+
+                if (!oldGermanRequired && aiResult.german_required === true) {
+                    nextStatus = 'rejected';
+                    rejectionReason = 'German language required';
+                    summary.changedToRejected += 1;
+                } else if (oldGermanRequired && aiResult.german_required === false) {
+                    nextStatus = 'pending_review';
+                    rejectionReason = null;
+                    summary.changedToPending += 1;
+                }
+
+                await updateJobAfterReanalysis(job._id, aiResult, nextStatus, rejectionReason);
+                summary.reanalyzed += 1;
+            } catch (error) {
+                console.error(`[Reanalyze All] Failed for job ${job?._id}:`, error.message);
+            }
+
+            if (index < jobs.length - 1) {
+                await delay(10000);
+            }
+        }
+
+        res.status(200).json(summary);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+jobsApiRouter.post('/admin/reanalyze/:id', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const job = await findJobByIdOrJobID(id);
+
+        if (!job) {
+            return res.status(404).json({ error: 'Job not found' });
+        }
+
+        if (isManuallyReviewed(job)) {
+            return res.status(200).json({
+                skipped: true,
+                reason: 'Job was manually reviewed by admin and cannot be re-analyzed',
+                job
+            });
+        }
+
+        const oldGermanRequired = Boolean(job.GermanRequired);
+        const aiResult = await analyzeJobWithGroq(job.JobTitle, job.Description);
+
+        if (!aiResult) {
+            return res.status(500).json({ error: 'AI analysis failed' });
+        }
+
+        let nextStatus = job.Status || 'pending_review';
+        let rejectionReason = job.RejectionReason || null;
+
+        if (!oldGermanRequired && aiResult.german_required === true) {
+            nextStatus = 'rejected';
+            rejectionReason = 'German language required';
+        } else if (oldGermanRequired && aiResult.german_required === false) {
+            nextStatus = 'pending_review';
+            rejectionReason = null;
+        }
+
+        const updatedJob = await updateJobAfterReanalysis(job._id, aiResult, nextStatus, rejectionReason);
+
+        res.status(200).json({
+            skipped: false,
+            job: updatedJob
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -135,7 +248,6 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
                 $set: { 
                     EnglishSpeaking: aiResult.english_speaking,
                     GermanRequired: aiResult.german_required,
-                    LocationClassification: aiResult.location_classification,
                     Domain: aiResult.domain,
                     SubDomain: aiResult.sub_domain,
                     ConfidenceScore: aiResult.confidence,
@@ -150,20 +262,8 @@ jobsApiRouter.post('/:id/analyze', async (req, res) => {
             message: "Job re-analyzed", 
             newStatus, 
             english: aiResult.english_speaking,
-            german: aiResult.german_required,
-            location: aiResult.location_classification 
+            german: aiResult.german_required
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-jobsApiRouter.post('/companies', async (req, res) => {
-    try {
-        const { name, domain, cities } = req.body;
-        if (!name) return res.status(400).json({ error: "Company Name is required" });
-        await addManualCompany({ name, domain, cities });
-        res.status(201).json({ message: "Company added." });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -177,16 +277,6 @@ jobsApiRouter.delete('/company', async (req, res) => {
             return res.status(200).json({ message: `Deleted ${result.deletedCount} jobs for ${name}.` });
         }
         res.status(400).json({ error: "Name required" });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-jobsApiRouter.delete('/companies/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await deleteManualCompany(id);
-        res.status(200).json({ message: "Manual company deleted." });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -233,5 +323,28 @@ jobsApiRouter.get('/test-logs', verifyToken, verifyAdmin, async (req, res) => {
     } catch (error) {
         console.error('[API] Error fetching test logs:', error);
         res.status(500).json({ error: 'Failed to fetch test logs', details: error.message });
+    }
+});
+
+jobsApiRouter.patch('/admin/restore/:id', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid ID' });
+        }
+
+        await restoreRejectedJobToQueue(id);
+        res.status(200).json({ message: 'Job restored to pending review queue' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+jobsApiRouter.post('/admin/clean-descriptions', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const summary = await cleanAllDescriptions();
+        res.status(200).json(summary);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });

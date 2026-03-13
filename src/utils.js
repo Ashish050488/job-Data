@@ -19,17 +19,3 @@ export const BANNED_ROLES = [
     "verkäufer", "sales assistant", "cashier",
     "zeitarbeit", "leiharbeit", "phd thesis", "master thesis", "bachelor thesis"
 ];
-
-// ✅ UPDATED: Broader keywords to ensure Engineers/Managers reach the AI layer
-export const COMMON_KEYWORDS = [
-    // Tech
-    "software", "developer", "engineer", "data", "it", "tech", "cloud",
-    "backend", "frontend", "fullstack", "devops", "security", "network",
-    "system", "analyst", "architect", "admin", "product owner", "scrum",
-
-    // Business / Management
-    "manager", "lead", "head of", "director", "vp", "chief", "officer",
-    "consultant", "strategist", "specialist", "coordinator",
-    "marketing", "sales", "finance", "account", "business", "hr", "people",
-    "operations", "project", "program", "product"
-];

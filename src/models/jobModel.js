@@ -1,34 +1,43 @@
-/**
- * Job Model - NO LOCATION CLASSIFICATION
- * All jobs assumed to be in Germany (pre-filtered by sources/configs)
- */
-
 const jobSchemaDefinition = {
     JobID: { type: String, required: true },
     sourceSite: { type: String, required: true },
     JobTitle: { type: String, required: true, trim: true },
     ApplicationURL: { type: String, required: true },
+    DirectApplyURL: { type: String, default: null },
     Description: { type: String, default: "" },
-    Location: { type: String, default: "N/A" }, // ✅ Raw location (not classified)
+    Location: { type: String, default: "N/A" },
     Company: { type: String, default: "N/A" },
+    ATSPlatform: { type: String, default: "N/A" },
     
-    // --- CLASSIFICATION FIELDS ---
     GermanRequired: { type: Boolean, default: false },
     Domain: { type: String, default: "Unclear" },
     SubDomain: { type: String, default: "Other" },
     ConfidenceScore: { type: Number, default: 0 },
     
-    // --- WORKFLOW STATUS ---
     Status: { type: String, default: "pending_review" },
 
     Department: { type: String, default: "N/A" },
+    Team: { type: String, default: null },
+    Office: { type: String, default: null },
+    WorkplaceType: { type: String, default: "Unspecified" },
+    EmploymentType: { type: String, default: null },
+    IsRemote: { type: Boolean, default: false },
+    Country: { type: String, default: null },
+    AllLocations: { type: Array, default: [] },
+    Tags: { type: Array, default: [] },
+    SalaryCurrency: { type: String, default: null },
+    SalaryMin: { type: Number, default: null },
+    SalaryMax: { type: Number, default: null },
+    SalaryInterval: { type: String, default: null },
+    isEntryLevel: { type: Boolean, default: false },
     ContractType: { type: String, default: "N/A" },
     ExperienceLevel: { type: String, default: "N/A" },
     PostedDate: { type: Date, default: null },
     createdAt: { type: Date },
     updatedAt: { type: Date },
     scrapedAt: { type: Date },
-    thumbStatus: { type: String, default: null }
+    thumbsUp: { type: Number, default: 0 },
+    thumbsDown: { type: Number, default: 0 }
 };
 
 class Job {
@@ -58,6 +67,8 @@ class Job {
                     }
                 } else if (schemaField.type === Date) {
                     this[key] = new Date(value);
+                } else if (schemaField.type === Array) {
+                    this[key] = Array.isArray(value) ? value : schemaField.default;
                 } else {
                     this[key] = value;
                 }
