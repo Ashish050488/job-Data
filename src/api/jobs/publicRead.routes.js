@@ -10,6 +10,7 @@ import {
     getCompanyNamesFromCache,
     getCategoryCountsFromCache,
     getPublicBaitJobsFromCache,
+    isJobsCacheFullyLoaded,
 } from '../../cache/index.js';
 
 import {
@@ -176,6 +177,14 @@ export function attachPublicReadRoutes(router) {
     // to GET /. MUST be registered before `/:id/full` — otherwise Express
     // matches "filter-counts" as :id.
     router.get('/filter-counts', softVerifyToken, attachPremiumStatus, (req, res) => {
+        // Counts aggregate over the WHOLE cache, so they must not be served
+        // during the streaming warm-up: 200 of 5,554 jobs yields real-looking
+        // but wrong numbers, and the frontend caches them in localStorage for
+        // 10 minutes. A 503 is not cached, so the client simply retries.
+        if (!isJobsCacheFullyLoaded()) {
+            return res.status(503).json({ error: 'Cache still loading', retry: 2 });
+        }
+
         try {
             const parsed = parseJobFilters(req.query);
             const { filters } = applyPremiumFilterGating(parsed, req.isPremium);
@@ -280,6 +289,14 @@ export function attachPublicReadRoutes(router) {
 
     // ─── Filter dropdown — counts per category ────────────────────────
     router.get('/category-counts', (req, res) => {
+        // Counts aggregate over the WHOLE cache, so they must not be served
+        // during the streaming warm-up: 200 of 5,554 jobs yields real-looking
+        // but wrong numbers, and the frontend caches them in localStorage for
+        // 10 minutes. A 503 is not cached, so the client simply retries.
+        if (!isJobsCacheFullyLoaded()) {
+            return res.status(503).json({ error: 'Cache still loading', retry: 2 });
+        }
+
         try {
             const counts = getCategoryCountsFromCache();
             res.status(200).json(counts);

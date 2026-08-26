@@ -18,6 +18,7 @@ export {
     removeJob,
     getCacheStats,
     isJobsCacheReady,
+    isJobsCacheFullyLoaded,
 } from './jobsCache.js';
 
 // ── Scraper fingerprint cache ──────────────────────────────────────────────

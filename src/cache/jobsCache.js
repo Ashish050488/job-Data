@@ -33,7 +33,16 @@ let companyIndex = new Map();      // "SAP"       → Set{...}
 // (Range predicates can't use a value-keyed inverted index.)
 let salaryRangeArray = [];
 
+// Two-stage readiness, deliberately separate:
+//   isReady        — the FIRST batch is queryable. Job lists start serving here
+//                    so a deploy doesn't blank the site for ~6s.
+//   isFullyLoaded  — every batch has streamed in. Aggregate endpoints
+//                    (category-counts / filter-counts) must wait for this:
+//                    counts computed off 200 of 5,554 jobs are not "partial
+//                    results", they are wrong numbers, and the frontend caches
+//                    them in localStorage for 10 minutes.
 let isReady = false;
+let isFullyLoaded = false;
 let loadedAt = null;
 let cacheVersion = 0;
 
@@ -155,6 +164,11 @@ export function initJobsCache(){
     console.log('[jobsCache] Loading jobs into RAM...');
     const startTime = Date.now();
 
+    // A refresh re-enters the warm-up window: counts must be withheld again
+    // until the new stream completes, or the endpoint would serve numbers off a
+    // half-rebuilt cache.
+    isFullyLoaded = false;
+
     let resolveFirstBatch;
     let rejectFirstBatch;
     const firstBatchReady = new Promise((resolve, reject) => {
@@ -229,6 +243,9 @@ export function initJobsCache(){
         // this is a single authoritative rebuild over the finished array.
         initSearchIndex(jobsArray);
 
+        // Only now are aggregate counts trustworthy.
+        isFullyLoaded = true;
+
         const elapsedMs = Date.now() - startTime;
         console.log(`[Cache] Fully loaded — ${loadedCount} jobs in ${elapsedMs}ms`);
     };
@@ -242,7 +259,14 @@ export function initJobsCache(){
             if (!settled) {
                 rejectFirstBatch(err);
             } else {
-                console.warn(`[Cache] Background load stopped early: ${err.message}`);
+                // isFullyLoaded deliberately stays false: the cache holds an
+                // unknown fraction of the collection, so any aggregate over it
+                // would be wrong. Count endpoints 503 until the next refresh
+                // completes a clean load.
+                console.warn(
+                    `[Cache] Background load stopped early: ${err.message} — ` +
+                    'cache is PARTIAL; count endpoints will 503 until the next refresh'
+                );
             }
         })
         .finally(() => { loadInFlight = null; firstBatchInFlight = null; });
@@ -257,6 +281,16 @@ export function initJobsCache(){
  * during the warm-up window. See requireCacheReady in server.js.
  */
 export function isJobsCacheReady(){ return isReady; }
+
+/**
+ * True once EVERY batch has streamed in — not just the first.
+ *
+ * Gate anything that aggregates over the whole cache on this rather than
+ * isJobsCacheReady(): during warm-up the counts are real but computed over a
+ * fraction of the data, which reads as "Localization (0)" instead of
+ * "Localization (5)" and gets cached client-side for 10 minutes.
+ */
+export function isJobsCacheFullyLoaded(){ return isFullyLoaded; }
 
 // Returns live jobs only — tombstones (null slots left by removals) are skipped.
 export function getAllJobs(){
@@ -350,6 +384,7 @@ export function getSalaryRangeArray() { return salaryRangeArray; }
 export function getCacheStats(){
     return {
         isReady,
+        isFullyLoaded,
         size: jobsMap.size,
         loadedAt,
         cacheVersion,
