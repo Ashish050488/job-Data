@@ -9,6 +9,7 @@ import {
 import { upsertJob, removeJob } from '../../cache/index.js';
 import { verifyToken, verifyAdmin } from '../../middleware/authMiddleware.js';
 import { extractAndStoreRequirements } from '../../gemma/index.js';
+import { categorizeJob } from '../../core/categorizer/index.js';
 import { Analytics } from '../../models/analyticsModel.js';
 
 export function attachAdminReviewRoutes(router) {
@@ -64,6 +65,15 @@ export function attachAdminReviewRoutes(router) {
                     if (updated && !updated.parsedRequirements) {
                         extractAndStoreRequirements(updated).catch(err =>
                             console.warn('[Gemma] Background extraction error:', err.message)
+                        );
+                    }
+
+                    // Background: assign the AI category. Fire-and-forget on the
+                    // same terms — an approval must never block on Gemma, and an
+                    // uncategorized job is swept up by categorizeUncategorized().
+                    if (updated) {
+                        categorizeJob(updated, 'jobs').catch(err =>
+                            console.warn('[Categorizer] Background categorization error:', err.message)
                         );
                     }
                 } else if (decision === 'reject') {

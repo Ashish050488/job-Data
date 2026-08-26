@@ -23,6 +23,23 @@ const DEFAULT_TEMPERATURE = 0.1;
 const MAX_RETRIES = 3;          // retries on 429 (rate limited)
 const SERVER_ERROR_RETRY_MS = 2_000; // wait before the single 500/503 retry
 
+// Hard per-call ceiling. Without it fetch inherits undici's 300s default, and a
+// stalled request pins a key slot for five full minutes before failing — which
+// is exactly what happened when the categorizer batched 25 titles and Gemma's
+// reasoning trace ran away. 120s is well clear of a healthy call (~35s at 15
+// titles) while failing fast enough to rotate to another key.
+const REQUEST_TIMEOUT_MS = 120_000;
+
+// Ceiling on generated tokens, reasoning trace included. Gemma 4 is a reasoning
+// model with no natural stopping point on a pathological prompt. 16384 is far
+// above any real response (categorizer ≈500 tokens, extractRequirements ≈1000),
+// so this only ever trips on a runaway.
+//
+// Deliberately generous: a cap that is too LOW is worse than none. At 2048 the
+// model spent the entire budget thinking, hit MAX_TOKENS and returned an empty
+// answer — a silent failure rather than a slow success.
+const MAX_OUTPUT_TOKENS = 16_384;
+
 /**
  * Sleeps for the given number of milliseconds.
  */
@@ -47,11 +64,23 @@ function backoffWithJitter(attempt) {
 async function requestOnce(apiKey, model, body) {
     const url = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
 
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    });
+    let res;
+    try {
+        res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+    } catch (netErr) {
+        // Timeout / DNS / socket failure. Tagged 503 so the retry loop treats it
+        // as transient and rotates the key instead of failing the whole call.
+        const err = new Error(
+            `[Gemma] Request failed: ${netErr.name === 'TimeoutError' ? `timed out after ${REQUEST_TIMEOUT_MS}ms` : netErr.message}`
+        );
+        err.status = 503;
+        throw err;
+    }
 
     if (!res.ok) {
         let errorBody = '';
@@ -112,6 +141,7 @@ export async function callGemma(systemPrompt, userMessage, options = {}) {
         }],
         generationConfig: {
             temperature,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
         },
     };
 

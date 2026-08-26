@@ -3,6 +3,7 @@ import { shouldContinuePaging } from './pagination.js';
 import { processJob } from './processJob.js';
 import { saveJobs, findSavedJobsByJobIDs } from '../db/index.js';
 import { extractAndStoreRequirements } from '../gemma/index.js';
+import { categorizeJobs } from './categorizer/index.js';
 import { isGeminiBudgetExhausted } from '../gemini/geminiClient.js';
 import { sleep } from '../utils.js';
 
@@ -35,7 +36,19 @@ async function scheduleAutoPublishEnrichment(savedBatch, siteName) {
                 );
             });
         }
-        console.log(`   -> [Auto-Publish] Scheduled Gemma extraction for ${savedDocs.length} job(s)`);
+
+        // Categorization rides the same fire-and-forget contract, but as ONE
+        // batched call for the whole group rather than one per job — the
+        // classifier takes 25 titles per Gemma request, so per-job calls would
+        // cost 25x the budget for the same work. A failure here leaves Category
+        // as-is and categorizeUncategorized() sweeps it up later.
+        setImmediate(() => {
+            categorizeJobs(savedDocs, 'jobs').catch(err =>
+                console.warn(`[Categorizer] Auto-publish categorization error: ${err.message}`)
+            );
+        });
+
+        console.log(`   -> [Auto-Publish] Scheduled Gemma extraction + categorization for ${savedDocs.length} job(s)`);
     } catch (err) {
         console.warn(`[Auto-Publish] Could not schedule extraction: ${err.message}`);
     }

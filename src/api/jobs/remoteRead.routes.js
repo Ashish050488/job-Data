@@ -18,6 +18,7 @@ import {
     getRemoteCategoryCountsFromCache,
     getRemotePublicBaitJobsFromCache,
 } from '../../cache/index.js';
+import { autoSuggestRemote } from '../../cache/searchIndex.js';
 import { connectToDb } from '../../db/connection.js';
 import { softVerifyToken } from '../../middleware/authMiddleware.js';
 import { toTeaser, toPublicJob } from './helpers.js';
@@ -172,6 +173,16 @@ remoteJobsRouter.get('/category-counts', (req, res) => {
 // frontend can share one response shape with the German detail endpoint.
 // Read from MongoDB (not the cache) because this accepts an ObjectId too, and
 // run through toPublicJob for the same data lockdown the German route uses.
+// ─── Search autocomplete — ghost-text completions ─────────────────────
+remoteJobsRouter.get('/autocomplete', (req, res) => {
+    try {
+        const q = typeof req.query.q === 'string' ? req.query.q : '';
+        res.status(200).json({ suggestions: autoSuggestRemote(q) });
+    } catch (error) {
+        res.status(200).json({ suggestions: [] });
+    }
+});
+
 remoteJobsRouter.get('/:id/full', softVerifyToken, async (req, res) => {
     try {
         const { id } = req.params;

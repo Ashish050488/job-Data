@@ -12,6 +12,7 @@ import {
     getRemoteCountryIndex,
 } from './remoteJobsCache.js';
 import { ALL_CATEGORIES } from '../core/categorize.js';
+import { searchRemoteJobs } from './searchIndex.js';
 
 // ────────────────────────────────────────────────────────────────────────
 // Set algebra helpers (identical semantics to jobsQuery.js)
@@ -288,19 +289,18 @@ function applySalaryRangeToSet(resultSet, jobsArr, salaryMin, salaryMax) {
     }
 }
 
-// Text search across title / company / location (case-insensitive).
-// Regex specials in user input are escaped so "C++" / "node.js" don't crash.
+// Text search, backed by the MiniSearch index in searchIndex.js.
+//
+// Was a raw `new RegExp(input, 'i')` over every surviving job — exact substring
+// only, so "recat" found nothing for "react" and "JS" never matched
+// "JavaScript". The index gives prefix matching, fuzzy tolerance, per-field
+// boosting and synonym expansion, and returns cache indexes directly so this
+// stays a Set intersection like every other facet.
 function applySearchToSet(resultSet, jobsArr, search) {
     if (!search || !search.trim()) return;
-    const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escaped, 'i');
+    const matchingIndexes = searchRemoteJobs(search);
     for (const idx of resultSet) {
-        const job = jobsArr[idx];
-        if (!regex.test(job.JobTitle || '') &&
-            !regex.test(job.Company || '') &&
-            !regex.test(job.Location || '')) {
-            resultSet.delete(idx);
-        }
+        if (!matchingIndexes.has(idx)) resultSet.delete(idx);
     }
 }
 

@@ -1,5 +1,6 @@
 import { connectToDb } from '../../db/connection.js';
 import { renderWeeklyDigest } from '../../email/index.js';
+import { mapLegacyCategories } from '../../core/categorize.js';
 
 /**
  * Persist a digest run summary to MongoDB for observability.
@@ -40,7 +41,10 @@ export function buildDigestMessages(users, jobsByCategory) {
     const messages = [];
 
     for (const user of users) {
-        const cats = Array.isArray(user.desiredCategories) ? user.desiredCategories : [];
+        // Saved preferences may still hold the old 6 slugs. Map them forward,
+        // or every pre-existing subscriber would match zero jobs and silently
+        // stop receiving a digest.
+        const cats = mapLegacyCategories(user.desiredCategories);
         if (cats.length === 0) continue;
 
         const userJobs = {};

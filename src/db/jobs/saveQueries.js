@@ -1,7 +1,7 @@
 import { connectToDb } from '../connection.js';
 import { SITES_CONFIG } from '../../config.js';
 import { createJobModel } from '../../models/jobModel.js';
-import { categorizeJob } from '../../core/categorize.js';
+import { categorizeJobFallback, mapLegacyCategory } from '../../core/categorize.js';
 
 export async function loadAllExistingIDs() {
     const db = await connectToDb();
@@ -24,22 +24,40 @@ export async function saveJobs(jobs) {
     const jobsCollection = db.collection('jobs');
 
     const operations = jobs.map(job => {
-        const { createdAt, updatedAt, ...pureJobData } = job;
-        // Compute Category at write time (deterministic, no AI).
-        // Filter queries then use indexed Category lookups instead of
-        // classifying every job on every API request.
-        const Category = categorizeJob(pureJobData);
+        // `Category` must never appear in $set — see below. Strip it off the
+        // incoming model so a stale value on the object can't sneak back in.
+        const { createdAt, updatedAt, Category: _incomingCategory, ...pureJobData } = job;
+
+        // Category is written ON INSERT ONLY.
+        //
+        // It used to be recomputed and $set on every upsert, which meant each
+        // re-scrape of an existing job overwrote the AI-assigned category
+        // (core/categorizer/) with the coarse keyword slug — the AI value
+        // survived only until the job was next seen.
+        //
+        // $setOnInsert gives a brand-new job an immediate keyword category so
+        // it is never uncategorized, and the fire-and-forget AI enrichment
+        // refines it moments later. On update Mongo ignores this entirely, so
+        // whatever the categorizer wrote stays put.
+        // The keyword classifier still returns an old slug, which is not one of
+        // the 28 filterable values — mapped forward so a job is filterable from
+        // the instant it is inserted, not only once the AI enrichment lands.
+        const fallbackCategory =
+            mapLegacyCategory(categorizeJobFallback(pureJobData)) || 'Other / General Business';
+
         return {
             updateOne: {
                 filter: { JobID: job.JobID, sourceSite: job.sourceSite },
                 update: {
                     $set: {
                         ...pureJobData,
-                        Category,
                         updatedAt: new Date(),
                         scrapedAt: new Date()
                     },
-                    $setOnInsert: { createdAt: new Date() }
+                    $setOnInsert: {
+                        createdAt: new Date(),
+                        Category: fallbackCategory,
+                    }
                 },
                 upsert: true,
             },

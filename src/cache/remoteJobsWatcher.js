@@ -36,6 +36,7 @@ import {
     applyRemoteJobChanges,
     getRemoteCacheStats,
 } from './remoteJobsCache.js';
+import { categorizeJobs } from '../core/categorizer/index.js';
 
 const JOBS_COLLECTION = 'remoteJobs';
 const TOKEN_COLLECTION = 'cacheState';
@@ -53,6 +54,13 @@ const RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Backoff bounds for reconnecting after a stream error.
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 60000;
+
+// How long uncategorized jobs accumulate before one batched classification run.
+// Much longer than BATCH_WINDOW_MS on purpose: a scraper run arrives as many
+// 300ms cache batches over several minutes, and firing per batch would mean
+// dozens of small Gemma calls where one large one does. Category is not
+// latency-sensitive — nothing renders differently for 30 seconds.
+const CATEGORIZE_DEBOUNCE_MS = 30_000;
 
 // Only these fields can change what the cache or its indexes hold. An update
 // touching just `scrapedAt` — which is most of what a scraper run produces —
@@ -75,6 +83,11 @@ let retryDelay = RETRY_BASE_MS;
 
 /** Events awaiting their batch window. */
 let pending = [];
+
+// Uncategorized jobs accumulating for the next classification run, keyed by
+// _id so repeated events for one job cannot enqueue it twice.
+let pendingCategorization = new Map();
+let categorizeTimer = null;
 
 const stats = {
     mode: 'stopped',          // 'changestream' | 'polling' | 'stopped'
@@ -195,6 +208,48 @@ async function flushPending(db) {
     stats.batchesApplied++;
 
     console.log(`[remoteJobsWatcher] applied ${result.upserted} upserts, ${result.removed} removals (cache size ${getRemoteCacheStats().size})`);
+
+    // The remote scraper writes jobs with no Category. Collect them and let the
+    // debounce below turn a whole scrape run into one classification pass.
+    queueForCategorization(changes.map(c => c.job));
+}
+
+// ─── Categorization (debounced, fire-and-forget) ───────────────────────────
+
+/** Adds any job lacking a Category to the pending set and arms the timer. */
+function queueForCategorization(jobs) {
+    let added = 0;
+
+    for (const job of jobs) {
+        if (!job?._id || !job.JobTitle) continue;
+        if (job.Category !== null && job.Category !== undefined) continue;
+
+        const key = String(job._id);
+        if (pendingCategorization.has(key)) continue;
+        pendingCategorization.set(key, { _id: job._id, JobID: job.JobID, JobTitle: job.JobTitle });
+        added++;
+    }
+
+    if (added === 0 || categorizeTimer) return;
+
+    categorizeTimer = setTimeout(() => {
+        categorizeTimer = null;
+
+        const batch = [...pendingCategorization.values()];
+        pendingCategorization = new Map();
+        if (batch.length === 0) return;
+
+        console.log(`[remoteJobsWatcher] Triggering categorization for ${batch.length} uncategorized jobs`);
+
+        // Deliberately NOT awaited — the watcher must never block on an AI call.
+        void categorizeJobs(batch, 'remoteJobs').catch(error => {
+            stats.lastError = error.message;
+            console.warn('[remoteJobsWatcher] categorization failed:', error.message);
+        });
+    }, CATEGORIZE_DEBOUNCE_MS);
+
+    // Must never hold the process open on shutdown.
+    if (typeof categorizeTimer.unref === 'function') categorizeTimer.unref();
 }
 
 function scheduleFlush(db) {
@@ -409,6 +464,8 @@ export async function stopRemoteJobsWatcher() {
     stopped = true;
 
     if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+    if (categorizeTimer) { clearTimeout(categorizeTimer); categorizeTimer = null; }
+    pendingCategorization = new Map();
     if (reconcileTimer) { clearInterval(reconcileTimer); reconcileTimer = null; }
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
@@ -420,5 +477,5 @@ export async function stopRemoteJobsWatcher() {
 }
 
 export function getRemoteJobsWatcherStats() {
-    return { ...stats, pendingEvents: pending.length };
+    return { ...stats, pendingEvents: pending.length, pendingCategorization: pendingCategorization.size };
 }

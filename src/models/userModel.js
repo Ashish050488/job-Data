@@ -30,8 +30,13 @@ const userSchemaDefinition = {
     isWaitlist: { type: Boolean, default: false },
 
     // Subscription preferences — source of truth for the weekly digest filter.
-    // Values match the 6 category IDs from core/categorize.js:
-    //   software, data, product_tech, other_tech, product_nontech, other_nontech
+    // Values are ALL_CATEGORIES from core/categorize.js (the 28 AI categories,
+    // e.g. 'Software Engineering', 'Data & Analytics').
+    //
+    // Deliberately untyped/unvalidated: existing rows still hold the old 6
+    // slugs ('software', 'data', …). Rather than reject or migrate them, the
+    // digest maps them forward via mapLegacyCategories(), so an old preference
+    // keeps working and is upgraded the next time the user saves.
     desiredCategories: { type: Array, default: [] },
 
     emailFrequency: { type: String, default: "Weekly" },

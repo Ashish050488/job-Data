@@ -1,4 +1,7 @@
 import {connectToRemoteDb} from '../db/connection.js';
+import {
+    initRemoteSearchIndex, addToRemoteSearchIndex, removeFromRemoteSearchIndex,
+} from './searchIndex.js';
 
 // ── Remote jobs RAM cache ─────────────────────────────────────────────────
 // A COMPLETELY independent twin of jobsCache.js:
@@ -152,6 +155,10 @@ export async function initRemoteJobsCache(){
     }
     sortSalaryRange();
 
+    // Full rebuild — array positions are the document ids, so this must follow
+    // the loop above rather than run incrementally.
+    initRemoteSearchIndex(remoteJobsArray);
+
     isReady = true;
     loadedAt = new Date();
     cacheVersion++;
@@ -179,6 +186,7 @@ function evictRemoteJob(jobId){
     const idx = remoteJobIdToArrayIndex.get(jobId);
     if (idx !== undefined) {
         removeRemoteJobFromIndexes(idx, existing);
+        removeFromRemoteSearchIndex(idx);
         remoteJobsArray[idx] = null; // tombstone — never splice (would shift indexes)
         remoteJobIdToArrayIndex.delete(jobId);
     }
@@ -204,12 +212,14 @@ export function upsertRemoteJob(job){
         remoteJobsArray[idx] = job;
         remoteJobsMap.set(job.JobID, job);
         indexRemoteJob(idx, job);
+        addToRemoteSearchIndex(job, idx);
     } else {
         const idx = remoteJobsArray.length;
         remoteJobsArray.push(job);
         remoteJobIdToArrayIndex.set(job.JobID, idx);
         remoteJobsMap.set(job.JobID, job);
         indexRemoteJob(idx, job);
+        addToRemoteSearchIndex(job, idx);
         salaryDirty = hasSalaryRange(job);
     }
 
@@ -244,6 +254,7 @@ function applyRemoteJobNoSort(job){
         remoteJobsArray[idx] = job;
         remoteJobsMap.set(job.JobID, job);
         indexRemoteJob(idx, job);
+        addToRemoteSearchIndex(job, idx);
         return salaryDirty;
     }
 
@@ -252,6 +263,7 @@ function applyRemoteJobNoSort(job){
     remoteJobIdToArrayIndex.set(job.JobID, idx);
     remoteJobsMap.set(job.JobID, job);
     indexRemoteJob(idx, job);
+    addToRemoteSearchIndex(job, idx);
     return hasSalaryRange(job);
 }
 

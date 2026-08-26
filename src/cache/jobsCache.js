@@ -1,4 +1,7 @@
 import {connectToDb} from '../db/connection.js';
+import {
+    initSearchIndex, resetSearchIndex, addToSearchIndex, removeFromSearchIndex,
+} from './searchIndex.js';
 
 // ── Primary store ─────────────────────────────────────────────────────────
 // jobsMap  : JobID → job, O(1) lookup by JobID.
@@ -195,6 +198,9 @@ export function initJobsCache(){
         jobsMap.clear();
         jobsArray = [];
         clearIndexes();
+        // Stale entries would map a search hit onto whatever job later occupies
+        // that array slot, so the text index is wiped with the rest.
+        resetSearchIndex();
 
         let loadedCount = 0;
         let batch = [];
@@ -218,6 +224,10 @@ export function initJobsCache(){
 
         // An empty collection still has to unblock the server.
         markLive(loadedCount);
+
+        // Incremental adds during streaming already populated the text index;
+        // this is a single authoritative rebuild over the finished array.
+        initSearchIndex(jobsArray);
 
         const elapsedMs = Date.now() - startTime;
         console.log(`[Cache] Fully loaded — ${loadedCount} jobs in ${elapsedMs}ms`);
@@ -268,6 +278,7 @@ function evictJob(jobId){
     const idx = jobIdToArrayIndex.get(jobId);
     if (idx !== undefined) {
         removeJobFromIndexes(idx, existing);
+        removeFromSearchIndex(idx);
         jobsArray[idx] = null; // tombstone — never splice (would shift indexes)
         jobIdToArrayIndex.delete(jobId);
     }
@@ -295,6 +306,7 @@ export function upsertJob(job){
         jobsArray[idx] = job;
         jobsMap.set(job.JobID, job);
         indexJob(idx, job);
+        addToSearchIndex(job, idx);
     } else {
         // New job: append and index at the tail.
         const idx = jobsArray.length;
@@ -302,6 +314,7 @@ export function upsertJob(job){
         jobIdToArrayIndex.set(job.JobID, idx);
         jobsMap.set(job.JobID, job);
         indexJob(idx, job);
+        addToSearchIndex(job, idx);
         salaryDirty = hasSalaryRange(job);
     }
 

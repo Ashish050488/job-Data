@@ -28,25 +28,93 @@ import {
     OVERRIDES,
 } from './keywords.js';
 
-export const CATEGORY_LABELS = {
-    software:        'Software Engineering',
-    data:            'Data / AI',
-    product_tech:    'Product (Tech)',
-    other_tech:      'Other Technical',
-    product_nontech: 'Product (Non-Tech)',
-    other_nontech:   'Other Non-Technical',
-};
+import { CATEGORIES } from '../categorizer/index.js';
 
+// ─── Canonical category set ────────────────────────────────────────────────
+//
+// These are now the 28 values the AI categorizer writes, not the old 6 slugs.
+// Everything that validates or displays a Category reads from here, so this
+// must stay exactly in step with core/categorizer/CATEGORIES.
+
+export const ALL_CATEGORIES = CATEGORIES;
+
+// The AI writes human-readable names, so a category IS its own label. The map
+// is kept because callers (digest emails, subscription confirmation) look
+// labels up by key and would otherwise all need rewriting.
+export const CATEGORY_LABELS = Object.fromEntries(CATEGORIES.map(c => [c, c]));
+
+// Display order for the frontend dropdown and the digest's category blocks —
+// roughly highest-volume first, with the two catch-alls last.
 export const CATEGORY_ORDER = [
-    'software',
-    'data',
-    'product_tech',
-    'other_tech',
-    'product_nontech',
-    'other_nontech',
+    'Software Engineering',
+    'Sales',
+    'Operations & Strategy',
+    'Marketing & Growth',
+    'Finance & Accounting',
+    'Customer Success & Support',
+    'Data & Analytics',
+    'Product Management',
+    'HR & People',
+    'Consulting',
+    'IT & Enterprise Systems',
+    'Design',
+    'Solutions & Pre-Sales',
+    'AI / ML',
+    'Hardware & Systems',
+    'Supply Chain & Manufacturing',
+    'Cybersecurity',
+    'Legal & Compliance',
+    'Research & Clinical',
+    'Education & Training',
+    'Retail & Facilities',
+    'Domain Specialist',
+    'Trust & Safety',
+    'Localization',
+    'Administration',
+    'Gaming & Entertainment',
+    'Other / General Business',
+    'Other / Open Application',
 ];
 
-export const ALL_CATEGORIES = Object.keys(CATEGORY_LABELS);
+// ─── Legacy migration ──────────────────────────────────────────────────────
+//
+// Existing data still carries the old 6 slugs: users' saved desiredCategories,
+// and any job document not yet touched by the AI categorizer. Mapping them
+// forward means an existing subscriber keeps receiving a digest instead of
+// silently matching nothing.
+export const LEGACY_CATEGORY_MAP = {
+    // slugs (what categorizeJobFallback returns)
+    software:        'Software Engineering',
+    data:            'Data & Analytics',
+    product_tech:    'Product Management',
+    other_tech:      'IT & Enterprise Systems',
+    product_nontech: 'Product Management',
+    other_nontech:   'Other / General Business',
+    // old display labels, in case a document stored the label
+    'Data / AI':           'Data & Analytics',
+    'Product (Tech)':      'Product Management',
+    'Other Technical':     'IT & Enterprise Systems',
+    'Product (Non-Tech)':  'Product Management',
+    'Other Non-Technical': 'Other / General Business',
+    // 'Software Engineering' exists in both sets and needs no mapping
+};
+
+/**
+ * Normalize any stored category value to one of the current 28.
+ * Already-current values pass through; unknown values return null so callers
+ * can drop them rather than filter on something that matches nothing.
+ */
+export function mapLegacyCategory(value) {
+    if (typeof value !== 'string') return null;
+    if (ALL_CATEGORIES.includes(value)) return value;
+    return LEGACY_CATEGORY_MAP[value] || null;
+}
+
+/** Map an array of possibly-legacy values, dropping unknowns and duplicates. */
+export function mapLegacyCategories(values) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(mapLegacyCategory).filter(Boolean))];
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -66,14 +134,20 @@ function anyMatch(haystack, keywords) {
 }
 
 /**
- * Classify one job into one of the 6 Category buckets.
+ * Classify one job into one of the 6 Category buckets — KEYWORD FALLBACK.
+ *
+ * Superseded by the Gemma classifier in core/categorizer/, which resolves 28
+ * categories instead of 6. Kept as the fallback for when Gemma is unreachable
+ * (every key dead, or the daily budget spent): a coarse category beats none.
+ *
+ * NOTE: returns a SLUG ('software'), not a display label.
  *
  * Expected fields (all optional except domain hint):
  *   JobTitle, Department, SubDomain, Domain ('Technical'|'Non-Technical'), Tags
  *
  * Returns one of CATEGORY_ORDER values, never null/undefined.
  */
-export function categorizeJob(job) {
+export function categorizeJobFallback(job) {
     if (!job) return 'other_nontech';
 
     const title = pad(lower(job.JobTitle));
@@ -127,3 +201,8 @@ function splitProduct(job) {
 
     return 'product_nontech';
 }
+
+// Back-compat alias. Existing importers (saveQueries, adminReanalysis,
+// backfill-categories) still call categorizeJob and keep the old behaviour
+// until they are migrated to the AI categorizer.
+export { categorizeJobFallback as categorizeJob };

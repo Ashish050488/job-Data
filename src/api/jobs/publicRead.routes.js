@@ -23,6 +23,7 @@ import {
 } from '../../db/index.js';
 import { softVerifyToken, attachPremiumStatus } from '../../middleware/authMiddleware.js';
 import { toTeaser, toPublicJob } from './helpers.js';
+import { autoSuggest } from '../../cache/searchIndex.js';
 import { StripHtml } from '../../utils/htmlUtils.js';
 import { ANONYMOUS_VIEW_LIMIT } from '../../env.js';
 import { Analytics } from '../../models/analyticsModel.js';
@@ -284,6 +285,19 @@ export function attachPublicReadRoutes(router) {
             res.status(200).json(counts);
         } catch (error) {
             res.status(500).json({ error: "Failed to fetch category counts" });
+        }
+    });
+
+    // ─── Search autocomplete — ghost-text completions ─────────────────
+    // Public and ungated: it returns terms already visible in job titles, and
+    // the search box itself is available to anonymous users.
+    router.get('/autocomplete', (req, res) => {
+        try {
+            const q = typeof req.query.q === 'string' ? req.query.q : '';
+            res.status(200).json({ suggestions: autoSuggest(q) });
+        } catch (error) {
+            // A failing autocomplete must never break the search box.
+            res.status(200).json({ suggestions: [] });
         }
     });
 
