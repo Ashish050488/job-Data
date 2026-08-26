@@ -11,6 +11,9 @@
 // the same prompt in 2-5s and, run 3-wide across the key pool, turns ~5 hours of
 // sequential work into minutes. The ongoing pipeline stays on Gemma.
 //
+// The model is PINNED to gemini-3.5-flash-lite rather than cascaded — see MODEL
+// below. This migration needs volume, not the top tier.
+//
 // Idempotent: re-running simply reclassifies, which is harmless.
 //
 //   node src/migrations/recategorize-all-jobs.js
@@ -26,8 +29,16 @@ dotenv.config();
 // process.env at module load, and would find nothing if hoisted above it.
 const { connectToDb } = await import('../db/connection.js');
 const { CATEGORIES } = await import('../core/categorizer/index.js');
-const { callGeminiWithCascade } = await import('../gemini/geminiClient.js');
+const { callGemini } = await import('../gemini/geminiClient.js');
 const { runParallelWithKeys } = await import('../gemini/workerPool.js');
+
+// Pinned, NOT cascaded. The cascade starts at gemini-3.7-flash, whose free-tier
+// ceiling is 17 requests/key/day — it would burn the scraper's premium tiers on
+// work that does not need them and then step down anyway. Title classification
+// is trivial: the earlier run showed 3.5-flash-lite matching 3.7-flash on the
+// hard hybrid titles. At 480 RPD x 3 keys this model alone covers the whole
+// backfill (~900 batches).
+const MODEL = 'gemini-3.5-flash-lite';
 
 // Same batch size as core/categorizer/. Gemini has no trouble at 15 (Gemma's
 // ceiling), and matching it keeps the two paths comparable.
@@ -144,7 +155,9 @@ async function classifyAndWrite(group, collectionName, db) {
         .map((job, i) => `${i + 1}. ${String(job.JobTitle || '').slice(0, 200)}`)
         .join('\n');
 
-    const { content } = await callGeminiWithCascade({
+    // callGemini (not the cascade) returns the response text directly.
+    const content = await callGemini({
+        model: MODEL,
         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
         systemInstruction: SYSTEM_PROMPT,
         label: `categorize ${group.length}`,
@@ -262,6 +275,7 @@ async function runPhase(db, collectionName, label, query, phaseNumber) {
 
 async function run() {
     console.log('🚀 Recategorizing all jobs (Gemini Flash Lite, parallel)');
+    console.log(`   model: ${MODEL} (pinned, no cascade)`);
     console.log(`   categories: ${CATEGORIES.length} | batch size: ${CHUNK} | split-retry: ${SUB_CHUNK}`);
     if (FLAGS.dryRun) console.log('   DRY RUN — no Gemini calls, no writes');
     if (FLAGS.limit) console.log(`   --limit=${FLAGS.limit} (per phase)`);
