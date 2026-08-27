@@ -125,6 +125,54 @@ function clearIndexes() {
     salaryRangeArray = [];
 }
 
+// The nine ATS platforms the MAIN (German) scraper writes. A row carrying one
+// of these came from the Germany pipeline, so its Location is a German city and
+// is entirely legitimate — the strict location rule must not touch it.
+//
+// Kept as a literal rather than derived from SITES_CONFIG on purpose: importing
+// config.js here would pull the whole scraper config graph into the cache layer.
+const MAIN_PIPELINE_SITES = new Set([
+    'Greenhouse Jobs', 'Ashby Jobs', 'Lever Jobs', 'Workday Jobs', 'Workable Jobs',
+    'Recruitee Jobs', 'Personio Jobs', 'SmartRecruiters Jobs', 'Teamtailor',
+]);
+
+/** True when the row was written by the German scraper, not the remote one. */
+export function isMainPipelineJob(job) {
+    return MAIN_PIPELINE_SITES.has(job?.sourceSite);
+}
+
+/**
+ * True when a job is FULLY remote — no country, city or hybrid qualifier.
+ *
+ * Location must be exactly "Remote" after trimming (case-insensitive).
+ * "Remote · United States", "Remote - US", "Remote (Hybrid)" and bare country
+ * names are location-restricted, not location-free. With no Location at all,
+ * WorkplaceType === 'Remote' is the fallback signal.
+ *
+ * Exported so src/migrations/clean-remote-jobs.js applies the identical rule —
+ * a second copy of this predicate would inevitably drift.
+ */
+export function isFullyRemote(job) {
+    const location = String(job?.Location ?? '').trim();
+    if (location) return location.toLowerCase() === 'remote';
+    return String(job?.WorkplaceType ?? '').trim().toLowerCase() === 'remote';
+}
+
+/**
+ * Whether a remoteJobs row belongs in the cache.
+ *
+ * Two populations share this collection and they need opposite treatment:
+ *   - Germany remote roles moved over from the main pipeline. Their Location is
+ *     a German city ("Berlin"), which is correct and must be kept.
+ *   - Rows from the remote scraper, where a Location like "Remote - US" means
+ *     the role is geographically restricted and does NOT belong in a
+ *     location-free vertical.
+ * sourceSite is what distinguishes them.
+ */
+export function isCacheableRemoteJob(job) {
+    return isMainPipelineJob(job) || isFullyRemote(job);
+}
+
 export async function initRemoteJobsCache(){
     console.log('[remoteJobsCache] Loading remote jobs into RAM...');
     const startTime = Date.now();
@@ -141,10 +189,16 @@ export async function initRemoteJobsCache(){
     remoteJobsMap.clear();
 
     let loadedCount = 0;
+    let skippedCount = 0;
     for await(const job of cursor){
+        // Belt-and-braces: even if location-restricted rows survive in Mongo,
+        // they never reach the cache and so never reach the API. Jobs from the
+        // German pipeline are exempt — their city Location is intentional.
+        if (!isCacheableRemoteJob(job)) { skippedCount++; continue; }
         remoteJobsMap.set(job.JobID, job);
         loadedCount++;
     }
+    console.log(`[remoteJobsCache] Loaded ${loadedCount} jobs, skipped ${skippedCount} with restricted locations`);
 
     remoteJobsArray = Array.from(remoteJobsMap.values());
     clearIndexes();

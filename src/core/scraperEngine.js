@@ -5,6 +5,8 @@ import { saveJobs, findSavedJobsByJobIDs } from '../db/index.js';
 import { extractAndStoreRequirements } from '../gemma/index.js';
 import { categorizeJobs } from './categorizer/index.js';
 import { isGeminiBudgetExhausted } from '../gemini/geminiClient.js';
+import { upsertRemoteJob } from '../cache/remoteJobsCache.js';
+import { resolveWorkplace } from '../utils/filterNormalizer.js';
 import { sleep } from '../utils.js';
 
 /**
@@ -21,14 +23,14 @@ import { sleep } from '../utils.js';
  * @param {object[]} savedBatch - job models just passed to saveJobs()
  * @param {string} siteName - sourceSite the batch belongs to
  */
-async function scheduleAutoPublishEnrichment(savedBatch, siteName) {
+async function scheduleAutoPublishEnrichment(savedBatch, siteName, collectionName = 'jobs') {
     const autoPublishedIDs = savedBatch
         .filter(job => job.Status === 'active' && job.approvalMethod === 'ai_auto')
         .map(job => job.JobID);
     if (autoPublishedIDs.length === 0) return;
 
     try {
-        const savedDocs = await findSavedJobsByJobIDs(autoPublishedIDs, siteName);
+        const savedDocs = await findSavedJobsByJobIDs(autoPublishedIDs, siteName, collectionName);
         for (const doc of savedDocs) {
             setImmediate(() => {
                 extractAndStoreRequirements(doc).catch(err =>
@@ -43,12 +45,20 @@ async function scheduleAutoPublishEnrichment(savedBatch, siteName) {
         // cost 25x the budget for the same work. A failure here leaves Category
         // as-is and categorizeUncategorized() sweeps it up later.
         setImmediate(() => {
-            categorizeJobs(savedDocs, 'jobs').catch(err =>
+            categorizeJobs(savedDocs, collectionName).catch(err =>
                 console.warn(`[Categorizer] Auto-publish categorization error: ${err.message}`)
             );
         });
 
-        console.log(`   -> [Auto-Publish] Scheduled Gemma extraction + categorization for ${savedDocs.length} job(s)`);
+        // A direct bulkWrite does not go through the remote watcher when it is
+        // in polling mode, so push remote rows into the remote cache explicitly.
+        // upsertRemoteJob is idempotent — a duplicate from the change stream is
+        // a no-op replace, not a second entry.
+        if (collectionName === 'remoteJobs') {
+            for (const doc of savedDocs) upsertRemoteJob(doc);
+        }
+
+        console.log(`   -> [Auto-Publish] Scheduled Gemma extraction + categorization for ${savedDocs.length} ${collectionName} job(s)`);
     } catch (err) {
         console.warn(`[Auto-Publish] Could not schedule extraction: ${err.message}`);
     }
@@ -132,7 +142,16 @@ export async function scrapeSite(siteConfig, existingIDsMap, crossEntityKeys) {
                     // them. This has to happen HERE rather than in processJob() — the
                     // models it returns have no _id until saveJobs() upserts them, and
                     // extractAndStoreRequirements() no-ops without one.
-                    await scheduleAutoPublishEnrichment(newJobsInBatch, siteName);
+                    //
+                    // saveJobs() routes fully-remote roles to `remoteJobs`, so the
+                    // enrichment must look them up in the collection they landed in —
+                    // otherwise findSavedJobsByJobIDs finds nothing and they silently
+                    // miss requirements + categorization.
+                    const remoteSaved = jobsToSave.filter(job => (job.filterWorkplace ?? resolveWorkplace(job)) === 'remote');
+                    const mainSaved   = jobsToSave.filter(job => (job.filterWorkplace ?? resolveWorkplace(job)) !== 'remote');
+
+                    await scheduleAutoPublishEnrichment(mainSaved, siteName, 'jobs');
+                    await scheduleAutoPublishEnrichment(remoteSaved, siteName, 'remoteJobs');
 
                     allNewJobs.push(...newJobsInBatch);
                     newJobsInBatch.forEach(job => existingIDs.add(job.JobID));

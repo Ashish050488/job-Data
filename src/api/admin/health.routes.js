@@ -17,8 +17,28 @@
 import { Router } from 'express';
 import { verifyToken, verifyAdmin } from '../../middleware/authMiddleware.js';
 import { connectToDb } from '../../db/connection.js';
-import { validatePromoCode } from '../../db/promoCodeQueries.js';
-import { BETA_PROMO_CODE, GOOGLE_CLIENT_ID, RESEND_API_KEY } from '../../env.js';
+import { GOOGLE_CLIENT_ID, RESEND_API_KEY } from '../../env.js';
+import { getCacheSize as getAiCacheSize, isAiResultCacheReady } from '../../cache/aiResultCache.js';
+// jobsCache exposes no getJobsMap — getCacheStats() carries { size, isReady,
+// isFullyLoaded }, which is what these checks need.
+import { getCacheStats, isJobsCacheFullyLoaded } from '../../cache/jobsCache.js';
+import { getRemoteCacheStats } from '../../cache/remoteJobsCache.js';
+import { getSearchIndexSize, getRemoteSearchIndexSize } from '../../cache/searchIndex.js';
+import { getRemoteJobsWatcherStats } from '../../cache/remoteJobsWatcher.js';
+import {
+    getActiveKeyCount as getGeminiActiveKeys,
+    getTotalKeyCount as getGeminiTotalKeys,
+    getAllKeysStatus as getGeminiKeyStatus,
+} from '../../gemini/keyManager.js';
+// Gemma's manager has no getActiveKeyCount — it has getKeyCount, and its keys
+// carry no dead flag (there is no 403 path for Gemma).
+import { getKeyCount as getGemmaKeyCount, getAllKeysStatus as getGemmaKeyStatus } from '../../gemma/keyManager.js';
+import { isGeminiBudgetExhausted } from '../../gemini/geminiClient.js';
+import { LEGACY_CATEGORY_MAP } from '../../core/categorize.js';
+
+// Values written before the AI categorizer existed. A job still carrying one of
+// these is uncategorized as far as the 28-category filter is concerned.
+const LEGACY_CATEGORY_VALUES = Object.keys(LEGACY_CATEGORY_MAP);
 
 export const adminHealthRouter = Router();
 adminHealthRouter.use(verifyToken, verifyAdmin);
@@ -125,14 +145,6 @@ const CHECKS = [
             : { status: 'fail', detail: 'RESEND_API_KEY missing' }),
     },
     {
-        key: 'promo_code', label: `Promo ${BETA_PROMO_CODE}`, group: 'Premium', critical: false,
-        run: async () => {
-            const check = await validatePromoCode(BETA_PROMO_CODE);
-            if (!check.valid) return { status: 'fail', detail: `code ${check.reason}` };
-            return { status: 'ok', detail: `redeemable · used ${check.promo.usedCount}×` };
-        },
-    },
-    {
         key: 'digest_cron', label: 'Weekly digest cron', group: 'Cron', critical: false,
         run: async () => {
             const db = await connectToDb();
@@ -140,9 +152,176 @@ const CHECKS = [
                 .find({}, { projection: { finishedAt: 1, startedAt: 1 } })
                 .sort({ startedAt: -1 }).limit(1).toArray();
             if (!last) return { status: 'warn', detail: 'no digest runs recorded yet' };
-            const days = (Date.now() - new Date(last.startedAt).getTime()) / 8.64e7;
-            if (days > 8) return { status: 'warn', detail: `last run ${Math.round(days)}d ago` };
-            return { status: 'ok', detail: `last run ${Math.round(days)}d ago` };
+
+            // A run row can exist with startedAt missing or unparseable, which
+            // made getTime() return NaN and rendered as "last run NaNd ago".
+            const startedMs = new Date(last.startedAt).getTime();
+            if (!Number.isFinite(startedMs)) {
+                return { status: 'warn', detail: 'last run date invalid' };
+            }
+
+            const hours = (Date.now() - startedMs) / 3.6e6;
+            const days = hours / 24;
+            // Under a day, "0d ago" reads as though it never ran — show hours.
+            const ago = days < 1 ? `${Math.round(hours)}h ago` : `${Math.round(days)}d ago`;
+
+            if (days > 8) return { status: 'warn', detail: `last run ${ago}` };
+            return { status: 'ok', detail: `last run ${ago}` };
+        },
+    },
+
+    // ── Cache ──────────────────────────────────────────────────────────
+    {
+        key: 'ai_result_cache', label: 'AI Result Cache', group: 'Cache', critical: true,
+        run: async () => {
+            if (!isAiResultCacheReady()) return { status: 'fail', detail: 'not loaded' };
+            const n = getAiCacheSize();
+            if (n === 0) return { status: 'fail', detail: '0 fingerprints cached' };
+            if (n < 1000) return { status: 'warn', detail: `${n} fingerprints (expected 13K+)` };
+            return { status: 'ok', detail: `${n} fingerprints cached` };
+        },
+    },
+    {
+        key: 'jobs_cache', label: 'Jobs Cache', group: 'Cache', critical: true,
+        run: async () => {
+            const { size } = getCacheStats();
+            // Emptiness is checked BEFORE the streaming check: a cache that is
+            // still loading but holds nothing is a failure, not a warning.
+            if (size === 0) return { status: 'fail', detail: 'empty cache' };
+            if (!isJobsCacheFullyLoaded()) return { status: 'warn', detail: `still streaming (${size} loaded so far)` };
+            if (size < 100) return { status: 'warn', detail: `only ${size} jobs in cache` };
+            return { status: 'ok', detail: `${size} jobs in cache` };
+        },
+    },
+    {
+        key: 'remote_cache', label: 'Remote Jobs Cache', group: 'Cache', critical: false,
+        run: async () => {
+            const { size, isReady } = getRemoteCacheStats();
+            if (!isReady) return { status: 'warn', detail: 'not loaded' };
+            if (size === 0) return { status: 'warn', detail: 'empty cache' };
+            if (size < 100) return { status: 'warn', detail: `only ${size} remote jobs in cache` };
+            return { status: 'ok', detail: `${size} remote jobs in cache` };
+        },
+    },
+    {
+        key: 'search_index', label: 'Search Index', group: 'Cache', critical: false,
+        run: async () => {
+            const indexed = getSearchIndexSize();
+            const remoteIndexed = getRemoteSearchIndexSize();
+            const cached = getCacheStats().size;
+            if (indexed === 0 && cached > 0) {
+                return { status: 'fail', detail: `0 indexed but ${cached} jobs cached` };
+            }
+            // The index is fed from the cache, so a large shortfall means adds
+            // are being dropped — search would silently miss those jobs.
+            if (cached > 0 && indexed < cached * 0.9) {
+                return { status: 'warn', detail: `${indexed} indexed vs ${cached} cached` };
+            }
+            return { status: 'ok', detail: `${indexed} jobs, ${remoteIndexed} remote indexed` };
+        },
+    },
+
+    // ── AI ─────────────────────────────────────────────────────────────
+    {
+        key: 'gemini_keys', label: 'Gemini API Keys', group: 'AI', critical: true,
+        run: async () => {
+            const active = getGeminiActiveKeys();
+            const total = getGeminiTotalKeys();
+            const perKey = getGeminiKeyStatus()
+                .map(k => `${k.key}: ${k.status} (${k.requestsThisMinute}/min)`)
+                .join(' · ');
+
+            if (active === 0) return { status: 'fail', detail: `all keys dead — ${perKey}` };
+            if (active < total) {
+                return { status: 'warn', detail: `${active}/${total} keys active, ${total - active} dead (403) — ${perKey}` };
+            }
+            return { status: 'ok', detail: `${active}/${total} active — ${perKey}` };
+        },
+    },
+    {
+        key: 'gemma_keys', label: 'Gemma API Keys', group: 'AI', critical: false,
+        run: async () => {
+            // getKeyCount() throws when GEMMA_API_KEYS is unset; timed() turns
+            // that into a fail, which is the right signal.
+            const total = getGemmaKeyCount();
+            if (total === 0) return { status: 'fail', detail: 'no Gemma keys configured' };
+            const perKey = getGemmaKeyStatus()
+                .map(k => `${k.key}: ${k.requestsThisMinute}/min`)
+                .join(' · ');
+            return { status: 'ok', detail: `${total} key(s) — ${perKey}` };
+        },
+    },
+    {
+        key: 'gemini_budget', label: 'Gemini Daily Budget', group: 'AI', critical: false,
+        run: async () => (isGeminiBudgetExhausted()
+            ? { status: 'warn', detail: 'all models exhausted for today — scraper will skip AI' }
+            : { status: 'ok', detail: 'budget available' }),
+    },
+
+    // ── Public API ─────────────────────────────────────────────────────
+    {
+        key: 'remote_jobs_api', label: 'Remote Jobs API', group: 'Public API', critical: false,
+        run: () => pingEndpoint('/api/remote-jobs?limit=1'),
+    },
+    {
+        key: 'category_counts_api', label: 'Category Counts API', group: 'Public API', critical: false,
+        run: () => pingEndpoint('/api/jobs/category-counts'),
+    },
+    {
+        key: 'autocomplete_api', label: 'Search Autocomplete', group: 'Public API', critical: false,
+        run: () => pingEndpoint('/api/jobs/autocomplete?q=engineer'),
+    },
+
+    // ── Data ───────────────────────────────────────────────────────────
+    {
+        key: 'remote_watcher', label: 'Remote Jobs Watcher', group: 'Data', critical: false,
+        run: async () => {
+            const s = getRemoteJobsWatcherStats();
+            const detail =
+                `mode=${s.mode} · applied ${s.eventsApplied}/${s.eventsReceived} · ` +
+                `reconnects ${s.reconnects} · pending ${s.pendingEvents}/${s.pendingCategorization} · ` +
+                `last event ${s.lastEventAt ? new Date(s.lastEventAt).toISOString() : 'never'}`;
+
+            if (s.mode === 'stopped') return { status: 'fail', detail: `watcher stopped — ${detail}` };
+            // Polling still keeps the cache correct, just far less promptly.
+            if (s.mode === 'polling') return { status: 'warn', detail: `degraded to polling — ${detail}` };
+            if (s.lastError) return { status: 'warn', detail: `${detail} · lastError: ${s.lastError}` };
+            return { status: 'ok', detail };
+        },
+    },
+    {
+        key: 'remote_freshness', label: 'Remote scraper freshness', group: 'Data', critical: false,
+        run: async () => {
+            const db = await connectToDb();
+            const [latest] = await db.collection('remoteJobs')
+                .find({}, { projection: { scrapedAt: 1 } })
+                .sort({ scrapedAt: -1 }).limit(1).toArray();
+            if (!latest?.scrapedAt) return { status: 'warn', detail: 'no scrapedAt found' };
+            const hours = (Date.now() - new Date(latest.scrapedAt).getTime()) / 3.6e6;
+            if (hours > 48) return { status: 'warn', detail: `last remote scrape ${Math.round(hours)}h ago` };
+            return { status: 'ok', detail: `last remote scrape ${Math.round(hours)}h ago` };
+        },
+    },
+    {
+        key: 'categorizer', label: 'Job Categorization', group: 'Data', critical: false,
+        run: async () => {
+            const db = await connectToDb();
+            const query = {
+                $or: [
+                    { Category: null },
+                    { Category: { $exists: false } },
+                    { Category: { $in: LEGACY_CATEGORY_VALUES } },
+                ],
+            };
+            const [main, remote] = await Promise.all([
+                db.collection('jobs').countDocuments(query),
+                db.collection('remoteJobs').countDocuments(query),
+            ]);
+            const total = main + remote;
+            if (total > 100) {
+                return { status: 'warn', detail: `${total} jobs uncategorized (${main} jobs, ${remote} remoteJobs)` };
+            }
+            return { status: 'ok', detail: `${total} uncategorized` };
         },
     },
 ];

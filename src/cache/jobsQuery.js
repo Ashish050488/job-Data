@@ -49,6 +49,25 @@ function facetUnion(index, values, isValid) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// What /jobs is allowed to show
+// ────────────────────────────────────────────────────────────────────────
+//
+// One predicate, used by every entry point in this file, so the list, the facet
+// counts, the category counts and the homepage teaser can never disagree about
+// which jobs exist.
+//
+//   GermanRequired === false — the whole product promise.
+//   filterWorkplace !== 'remote' — fully-remote roles live on /remote-jobs.
+//     Browse Jobs is the Germany on-site/hybrid vertical; showing remote roles
+//     in both places double-counted them and made the two pages overlap.
+function isPublicJob(job) {
+    return job !== null
+        && job !== undefined
+        && job.GermanRequired === false
+        && job.filterWorkplace !== 'remote';
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Core filter pipeline (shared by list + facet counts)
 // ────────────────────────────────────────────────────────────────────────
 //
@@ -58,11 +77,10 @@ function facetUnion(index, values, isValid) {
 function computeFilteredIndexSet(filters = {}) {
     const jobsArr = getJobsArray();
 
-    // Universe: live (non-tombstone), public (GermanRequired === false) jobs.
+    // Universe: live (non-tombstone) jobs this vertical is allowed to show.
     const universe = new Set();
     for (let i = 0; i < jobsArr.length; i++) {
-        const job = jobsArr[i];
-        if (job !== null && job.GermanRequired === false) universe.add(i);
+        if (isPublicJob(jobsArr[i])) universe.add(i);
     }
 
     // Collect the index-backed facet sets to intersect with the universe.
@@ -138,7 +156,7 @@ export function getJobsPaginatedFromCache(page = 1, limit = 30, filters = {}) {
     if (isUnfiltered(filters)) {
         const version = getCacheStats().cacheVersion;
         if (sortedAllMemo.version !== version || sortedAllMemo.dateKey !== dateKey) {
-            const all = getJobsArray().filter(job => job !== null && job.GermanRequired === false);
+            const all = getJobsArray().filter(isPublicJob);
             sortedAllMemo = { version, dateKey, jobs: shuffleJobsDaily(all, dateKey) };
         }
         sorted = sortedAllMemo.jobs;
@@ -241,10 +259,18 @@ export function getCompanyNamesFromCache() {
 // categories so the UI can render every bucket. Reads Set sizes off the index;
 // tombstones are already excluded from the index, so .size is accurate.
 export function getCategoryCountsFromCache() {
-    const categoryIndex = getCategoryIndex();
     const counts = {};
-    for (const cat of ALL_CATEGORIES) {
-        counts[cat] = categoryIndex.get(cat)?.size ?? 0;
+    for (const cat of ALL_CATEGORIES) counts[cat] = 0;
+
+    // Deliberately a scan, not categoryIndex.get(cat).size. The index counts
+    // EVERY cached job in a category — German-required and fully-remote ones
+    // included — so the badge would promise more results than /jobs can return.
+    // One pass over ~5.5k jobs is sub-millisecond and keeps the number honest.
+    const jobsArr = getJobsArray();
+    for (let i = 0; i < jobsArr.length; i++) {
+        const job = jobsArr[i];
+        if (!isPublicJob(job)) continue;
+        if (job.Category && counts[job.Category] !== undefined) counts[job.Category] += 1;
     }
     return counts;
 }
@@ -255,7 +281,7 @@ export function getCategoryCountsFromCache() {
 export function getPublicBaitJobsFromCache() {
 
     let jobs = getAllJobs();
-    jobs = jobs.filter(job => job.GermanRequired === false);
+    jobs = jobs.filter(isPublicJob);
     // Deliberately NOT the daily shuffle — this is the curated "9 newest"
     // homepage teaser, not the browse view.
     jobs = sortByNewest(jobs);

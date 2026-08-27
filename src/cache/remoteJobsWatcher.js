@@ -35,6 +35,7 @@ import {
     initRemoteJobsCache,
     applyRemoteJobChanges,
     getRemoteCacheStats,
+    isCacheableRemoteJob,
 } from './remoteJobsCache.js';
 import { categorizeJobs } from '../core/categorizer/index.js';
 
@@ -155,6 +156,14 @@ function queueEvent(event) {
             if (!isSignificantUpdate(event)) return;
             // fullDocument is present because the stream requests updateLookup.
             if (event.fullDocument) {
+                // Same gate as the initial load: a remote-scraped job with a
+                // restricted Location ("Remote - US") must not enter the cache
+                // just because it arrived live instead of at boot. Germany
+                // pipeline rows are exempt.
+                if (!isCacheableRemoteJob(event.fullDocument)) {
+                    console.log(`[remoteJobsWatcher] Skipped non-fully-remote job: ${event.fullDocument.Location ?? '(no location)'}`);
+                    return;
+                }
                 pending.push({ type: 'upsert', job: event.fullDocument });
             }
             break;
