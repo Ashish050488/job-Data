@@ -89,6 +89,14 @@ export const BETA_PROMO_CODE = (process.env.BETA_PROMO_CODE || 'BETA2026').toUpp
 // We use the ID-token flow, so no client secret is needed.
 export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
+// ── WhatsApp Channel (via WuzAPI) ─────────────────────────────────────────
+// WuzAPI runs as a separate PM2 process and holds the WhatsApp session; this
+// backend only calls its REST API. The whole feature is gated on
+// WHATSAPP_CHANNEL_JID: leave it empty and the daily digest is a silent no-op.
+export const WUZAPI_URL = process.env.WUZAPI_URL || 'http://localhost:8080';
+export const WUZAPI_TOKEN = process.env.WUZAPI_TOKEN || '';
+export const WHATSAPP_CHANNEL_JID = process.env.WHATSAPP_CHANNEL_JID || ''; // e.g. 120363171744447809@newsletter
+
 if (!VISITOR_IP_SALT) {
     console.warn('[env] ⚠️  VISITOR_IP_SALT not set — IP hashing will be insecure.');
 }

@@ -4,6 +4,7 @@ import { attachProfileRoutes } from './auth/profile.routes.js';
 import { attachUnsubscribeRoute } from './auth/unsubscribe.routes.js';
 import { attachPremiumRoutes } from './auth/premium.routes.js';
 import { attachCohortWaitlistRoutes } from './auth/cohortWaitlist.routes.js';
+import { attachDeleteAccountRoute } from './auth/deleteAccount.routes.js';
 
 /**
  * Auth router. Sub-modules live under ./auth/.
@@ -15,3 +16,4 @@ attachProfileRoutes(authRouter);      // /me, /preferences
 attachUnsubscribeRoute(authRouter);   // /unsubscribe
 attachPremiumRoutes(authRouter);      // /redeem-promo, /subscription, /usage
 attachCohortWaitlistRoutes(authRouter); // /cohort-waitlist (demand test)
+attachDeleteAccountRoute(authRouter);   // DELETE /account (GDPR erasure)
