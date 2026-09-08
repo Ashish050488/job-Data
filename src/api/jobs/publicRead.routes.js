@@ -10,6 +10,8 @@ import {
     getCompanyNamesFromCache,
     getCategoryCountsFromCache,
     getPublicBaitJobsFromCache,
+    getRelatedJobsFromCache,
+    findCachedJobByAnyId,
     isJobsCacheFullyLoaded,
 } from '../../cache/index.js';
 
@@ -284,6 +286,31 @@ export function attachPublicReadRoutes(router) {
             res.status(200).json(names);
         } catch (error) {
             res.status(500).json({ error: "Failed to fetch company names" });
+        }
+    });
+
+    // ─── Related jobs — "more like this" on a job detail page ─────────
+    // Pure RAM read (category index → newest-first slice), no DB and no auth:
+    // it returns the same teaser shape the public list already exposes, and the
+    // job detail page it feeds is itself public. Registered BEFORE '/:id/full'
+    // is irrelevant (different suffix), but it must stay above any bare '/:id'.
+    router.get('/:id/related', (req, res) => {
+        try {
+            const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
+            const job = findCachedJobByAnyId(req.params.id);
+            // Unknown id, or a job with no category, is not an error here — the
+            // job page just renders without a related block.
+            if (!job) return res.status(200).json({ jobs: [], categoryTotal: 0, category: null });
+
+            const { jobs, categoryTotal } = getRelatedJobsFromCache(job.Category, req.params.id, limit);
+            res.status(200).json({
+                category: job.Category || null,
+                categoryTotal,
+                jobs: jobs.map(j => toTeaser(j)),
+            });
+        } catch (error) {
+            // A failing related block must never take down the job page.
+            res.status(200).json({ jobs: [], categoryTotal: 0, category: null });
         }
     });
 

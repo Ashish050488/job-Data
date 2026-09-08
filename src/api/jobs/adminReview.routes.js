@@ -11,6 +11,7 @@ import { verifyToken, verifyAdmin } from '../../middleware/authMiddleware.js';
 import { extractAndStoreRequirements } from '../../gemma/index.js';
 import { categorizeJob } from '../../core/categorizer/index.js';
 import { Analytics } from '../../models/analyticsModel.js';
+import { pingIndexNowAsync, jobUrl } from '../../utils/indexNow.js';
 
 export function attachAdminReviewRoutes(router) {
 
@@ -60,6 +61,13 @@ export function attachAdminReviewRoutes(router) {
                 } else if (decision === 'accept') {
                     const updated = await findJobByIdOrJobID(id);
                     if (updated) upsertJob(updated);
+
+                    // Newly live URL → tell IndexNow. Fire-and-forget, so the
+                    // admin's response is not held up by a third-party POST.
+                    // Only this branch pings: the wasAutoPublished branch above
+                    // was already announced by the scraper, and a rejection
+                    // removes a page rather than publishing one.
+                    if (updated) pingIndexNowAsync([jobUrl(updated, 'jobs')]);
 
                     // Background: extract structured requirements via Gemma 4 31B
                     if (updated && !updated.parsedRequirements) {

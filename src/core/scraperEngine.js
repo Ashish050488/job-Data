@@ -8,6 +8,7 @@ import { isGeminiBudgetExhausted } from '../gemini/geminiClient.js';
 import { upsertRemoteJob } from '../cache/remoteJobsCache.js';
 import { resolveWorkplace } from '../utils/filterNormalizer.js';
 import { sleep } from '../utils.js';
+import { pingIndexNowAsync, jobUrl } from '../utils/indexNow.js';
 
 /**
  * Kick off Gemma requirement extraction for the auto-published jobs in a batch.
@@ -57,6 +58,13 @@ async function scheduleAutoPublishEnrichment(savedBatch, siteName, collectionNam
         if (collectionName === 'remoteJobs') {
             for (const doc of savedDocs) upsertRemoteJob(doc);
         }
+
+        // Announce the new live URLs to IndexNow (Bing/Yandex/Seznam/Naver).
+        // Fire-and-forget: pingIndexNowAsync schedules the POST and returns, so
+        // the scrape loop never waits on it and a failure can't abort the batch.
+        // savedDocs is the right source — these are the read-back documents, so
+        // they carry the Mongo _id the public URL is built from.
+        pingIndexNowAsync(savedDocs.map(doc => jobUrl(doc, collectionName)));
 
         console.log(`   -> [Auto-Publish] Scheduled Gemma extraction + categorization for ${savedDocs.length} ${collectionName} job(s)`);
     } catch (err) {

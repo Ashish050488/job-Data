@@ -76,6 +76,12 @@ export const MANUAL_REVIEW_THRESHOLD = Number(process.env.MANUAL_REVIEW_THRESHOL
 // a CORS allow-list value and points at localhost in development.
 export const SITE_URL = (process.env.SITE_URL || 'https://englishjobsgermany.com').replace(/\/$/, '');
 
+// IndexNow submission key (32-char hex). Ownership is proved by serving the
+// same string at <SITE_URL>/<key>.txt — that file lives in the frontend repo
+// under public/. Leave this empty and every IndexNow ping is a silent no-op,
+// which is the correct behaviour in development.
+export const INDEXNOW_KEY = (process.env.INDEXNOW_KEY || '').trim();
+
 // ── Premium early access ──────────────────────────────────────────────────
 // One shared 100%-off code, redeemable once per user (enforced in
 // premium.routes.js via subscription history). Sent in the welcome email to

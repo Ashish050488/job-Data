@@ -4,6 +4,7 @@
 //   getCompanyNamesFromCache  → /api/jobs/company-names
 //   getCategoryCountsFromCache → /api/jobs/category-counts
 //   getPublicBaitJobsFromCache → /api/jobs/public-bait
+//   getRelatedJobsFromCache   → /api/jobs/:id/related
 //
 //   getJobById   → single job lookup, used by /:id/full when caller has JobID
 //   upsertJob    → admin write hook (approve/edit)
@@ -38,6 +39,8 @@ export {
     getCompanyNamesFromCache,
     getCategoryCountsFromCache,
     getPublicBaitJobsFromCache,
+    getRelatedJobsFromCache,
+    findCachedJobByAnyId,
 } from './jobsQuery.js';
 
 // ── Remote jobs vertical (/api/remote-jobs) ────────────────────────────────

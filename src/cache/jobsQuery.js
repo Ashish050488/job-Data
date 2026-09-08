@@ -1,5 +1,5 @@
 import {
-    getAllJobs, getJobsArray, getCacheStats,
+    getAllJobs, getJobsArray, getCacheStats, getJobById,
     getWorkplaceIndex, getExperienceIndex, getEmploymentIndex,
     getVisaIndex, getRelocationIndex, getSalaryTierIndex,
     getCategoryIndex, getCompanyIndex,
@@ -273,6 +273,55 @@ export function getCategoryCountsFromCache() {
         if (job.Category && counts[job.Category] !== undefined) counts[job.Category] += 1;
     }
     return counts;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Related jobs — "more like this" for a single job detail page.
+// ────────────────────────────────────────────────────────────────────────
+//
+// Pure RAM: categoryIndex gives the array positions for the category, so this
+// touches only that category's jobs rather than scanning all ~5.5k. Applies the
+// SAME isPublicJob() gate as the list endpoint — linking to a job /jobs will
+// not show would send crawlers (and users) to a page the site disowns.
+//
+// Returns { jobs, categoryTotal } where categoryTotal is the honest public
+// count for the category, used for the "N+ positions" copy on the job page.
+// Resolve a public URL id (Mongo _id, or JobID) to the cached job. Both paths
+// stay in RAM — /:id/related must never reach Mongo.
+export function findCachedJobByAnyId(idOrJobID) {
+    const byJobId = getJobById(idOrJobID);
+    if (byJobId) return byJobId;
+    const jobsArr = getJobsArray();
+    for (let i = 0; i < jobsArr.length; i++) {
+        const job = jobsArr[i];
+        if (job && String(job._id) === String(idOrJobID)) return job;
+    }
+    return null;
+}
+
+export function getRelatedJobsFromCache(category, excludeJobId, limit = 5) {
+    const empty = { jobs: [], categoryTotal: 0 };
+    if (!category) return empty;
+
+    const idxSet = getCategoryIndex().get(category);
+    if (!idxSet || idxSet.size === 0) return empty;
+
+    const jobsArr = getJobsArray();
+    const candidates = [];
+    for (const i of idxSet) {
+        const job = jobsArr[i];
+        if (!isPublicJob(job)) continue;
+        candidates.push(job);
+    }
+
+    const categoryTotal = candidates.length;
+    // Exclude the job being viewed AFTER counting, so the total reflects the
+    // category rather than the category-minus-one.
+    const related = sortByNewest(candidates)
+        .filter(job => String(job._id) !== String(excludeJobId) && job.JobID !== excludeJobId)
+        .slice(0, limit);
+
+    return { jobs: related, categoryTotal };
 }
 
 // ────────────────────────────────────────────────────────────────────────
